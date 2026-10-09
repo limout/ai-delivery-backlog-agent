@@ -1,0 +1,41 @@
+{
+  "ok": true,
+  "live_gemini": true,
+  "overwrote_baseline": false,
+  "input": "C:\\Repo\\LimoutAI\\limout-ai-delivery-backlog-agent\\input\\copilot-complete.json",
+  "output": "C:\\Repo\\LimoutAI\\limout-ai-delivery-backlog-agent\\output\\llm-eval-backlog-v2.json",
+  "baseline": "C:\\Repo\\LimoutAI\\limout-ai-delivery-backlog-agent\\output\\real-backlog.json",
+  "provider": "gemini",
+  "model": "gemini-3.5-flash-lite",
+  "timeout_seconds": "180",
+  "gemini_schema_unsupported_keys": [],
+  "canonical_has_additionalProperties": false,
+  "envelope_status": "COMPLETE",
+  "envelope_workflow_status": "COMPLETE",
+  "elapsed_ms": 14717,
+  "item_count": 11,
+  "type_counts": {
+    "epic": 1,
+    "feature": 5,
+    "user_story": 5
+  },
+  "finding_count": 12,
+  "finding_codes": {
+    "GENERATED_CONTENT": 11,
+    "AMBIGUOUS_DECOMPOSITION": 1
+  },
+  "uncovered_functional_requirements": [],
+  "unparented_non_epic": 0,
+  "items_with_dependencies": 0,
+  "stories_with_ac": 3,
+  "stories_with_tests": 0,
+  "usage": {
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "duration_ms": 6512,
+    "input_tokens": 7014,
+    "output_tokens": 3020,
+    "total_tokens": 10034
+  },
+  "application_validation": "passed"
+}

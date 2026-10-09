@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "limout-ai-delivery-backlog-agent"
+version = "0.1.0"
+description = "Tracker-independent canonical backlog core for AI Delivery."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.7,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+gemini = [
+    "google-genai>=1.0,<3",
+]
+
+[project.scripts]
+backlog-preview = "backlog_agent.cli:run"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"

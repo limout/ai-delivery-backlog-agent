@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "input": "C:\\Repo\\LimoutAI\\limout-ai-delivery-backlog-agent\\input\\copilot-complete.json",
+  "output": "C:\\Repo\\LimoutAI\\limout-ai-delivery-backlog-agent\\output\\llm-eval-backlog.json",
+  "baseline": "C:\\Repo\\LimoutAI\\limout-ai-delivery-backlog-agent\\output\\real-backlog.json",
+  "provider": "gemini",
+  "model": "gemini-3.5-flash-lite",
+  "timeout_seconds": "180",
+  "envelope_status": "COMPLETE",
+  "envelope_workflow_status": "COMPLETE",
+  "live_gemini": true,
+  "overwrote_baseline": false,
+  "elapsed_ms": 1073,
+  "blocker": "AIProviderError: Gemini request failed. type=ClientError, status=400, message=400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'generation_config.response_schema\\': Cannot find field.\\nInvalid JSON payload received. Unknown name \"additional_properties\" at \\'generation_config.response_schema.properties[0].value.items\\': Cannot find field.\\nInvalid JSON payload received. Unknown name \"additional_properties\" at \\'generation_config.response_schema.properties[0].value.items.properties[8].value.items\\': Cannot find field.', 'status': 'INVALID_ARGUMENT', 'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest', 'fieldViolations': [{'field': 'generation_config.response_schema', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'generation_config.response_schema\\': Cannot find field.'}, {'field': 'generation_config.response_schema.properties[0].value.items', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'generation_config.response_schema.properties[0].value.items\\': Cannot find field.'}, {'field': 'generation_config.response_schema.properties[0].value.items.properties[8].value.items', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'generation_config.response_schema.properties[0].value.items.properties[8].value.items\\': Cannot find field.'}]}]}}"
+}

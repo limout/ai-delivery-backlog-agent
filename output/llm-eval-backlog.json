@@ -1,0 +1,10 @@
+{
+  "live_gemini": true,
+  "ok": false,
+  "overwrote_baseline": false,
+  "input": "input/copilot-complete.json",
+  "baseline": "output/real-backlog.json",
+  "backlog": null,
+  "findings": null,
+  "blocker": "Gemini ClientError 400 INVALID_ARGUMENT: response_schema includes JSON Schema keyword additionalProperties, which the Gemini API rejects. No canonical backlog was produced. This is not a mock run."
+}

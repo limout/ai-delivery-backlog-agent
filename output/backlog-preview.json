@@ -1,0 +1,477 @@
+{
+  "backlog": {
+    "contract_id": "canonical.backlog.v1",
+    "backlog_id": "cbl_4078ee3e-d28e-5a52-9566-920d5656e1c2",
+    "items": [
+      {
+        "canonical_id": "cbl_4191f4fc-af36-5837-beac-b52fa527f503",
+        "title": "Build a customer self-service portal for insurance policy renewals.",
+        "description": "",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": null,
+        "child_ids": [
+          "cbl_d97e9a26-942f-54db-b934-af61886a514d",
+          "cbl_aad51205-f7f8-55ae-a57d-e651f2fbb102",
+          "cbl_e228e9e0-45ef-54a1-afef-1b4e2cf1fbcd",
+          "cbl_66ac673c-2565-5c83-80b9-c8e86544447b"
+        ],
+        "acceptance_criteria": [],
+        "test_requirements": [],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.user_request",
+            "field_name": "user_request",
+            "excerpt": "Build a customer self-service portal for insurance policy renewals."
+          }
+        ],
+        "effort": null,
+        "type": "epic"
+      },
+      {
+        "canonical_id": "cbl_d97e9a26-942f-54db-b934-af61886a514d",
+        "title": "Authenticated customer portal",
+        "description": "",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": "cbl_4191f4fc-af36-5837-beac-b52fa527f503",
+        "child_ids": [],
+        "acceptance_criteria": [],
+        "test_requirements": [],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.solution.key_capabilities[0]",
+            "field_name": "key_capabilities",
+            "excerpt": "Authenticated customer portal"
+          }
+        ],
+        "effort": null,
+        "type": "feature"
+      },
+      {
+        "canonical_id": "cbl_aad51205-f7f8-55ae-a57d-e651f2fbb102",
+        "title": "Policy renewal workflow",
+        "description": "",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": "cbl_4191f4fc-af36-5837-beac-b52fa527f503",
+        "child_ids": [],
+        "acceptance_criteria": [],
+        "test_requirements": [],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.solution.key_capabilities[1]",
+            "field_name": "key_capabilities",
+            "excerpt": "Policy renewal workflow"
+          }
+        ],
+        "effort": null,
+        "type": "feature"
+      },
+      {
+        "canonical_id": "cbl_e228e9e0-45ef-54a1-afef-1b4e2cf1fbcd",
+        "title": "Customer portal",
+        "description": "",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": "cbl_4191f4fc-af36-5837-beac-b52fa527f503",
+        "child_ids": [],
+        "acceptance_criteria": [],
+        "test_requirements": [],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.delivery_plan.workstreams[0]",
+            "field_name": "workstreams",
+            "excerpt": "Customer portal"
+          }
+        ],
+        "effort": null,
+        "type": "feature"
+      },
+      {
+        "canonical_id": "cbl_66ac673c-2565-5c83-80b9-c8e86544447b",
+        "title": "Notifications",
+        "description": "",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": "cbl_4191f4fc-af36-5837-beac-b52fa527f503",
+        "child_ids": [],
+        "acceptance_criteria": [],
+        "test_requirements": [],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.delivery_plan.workstreams[1]",
+            "field_name": "workstreams",
+            "excerpt": "Notifications"
+          }
+        ],
+        "effort": null,
+        "type": "feature"
+      },
+      {
+        "canonical_id": "cbl_67be7a79-123e-5a71-9b65-f2a28e5cbc8f",
+        "title": "The system shall allow a customer to renew an eligible policy online.",
+        "description": "",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": null,
+        "child_ids": [],
+        "acceptance_criteria": [],
+        "test_requirements": [],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.functional_requirements[0]",
+            "field_name": "functional_requirements",
+            "excerpt": "The system shall allow a customer to renew an eligible policy online."
+          }
+        ],
+        "effort": null,
+        "type": "user_story"
+      },
+      {
+        "canonical_id": "cbl_88587408-151b-50bf-9619-a1c0f02825da",
+        "title": "The system shall send a renewal confirmation to the customer.",
+        "description": "",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": null,
+        "child_ids": [],
+        "acceptance_criteria": [],
+        "test_requirements": [],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.functional_requirements[1]",
+            "field_name": "functional_requirements",
+            "excerpt": "The system shall send a renewal confirmation to the customer."
+          }
+        ],
+        "effort": null,
+        "type": "user_story"
+      },
+      {
+        "canonical_id": "cbl_cf01441a-be72-54b0-8722-3b89870174c8",
+        "title": "The system shall display current premium and coverage before confirmation.",
+        "description": "",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": null,
+        "child_ids": [],
+        "acceptance_criteria": [],
+        "test_requirements": [],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.functional_requirements[2]",
+            "field_name": "functional_requirements",
+            "excerpt": "The system shall display current premium and coverage before confirmation."
+          }
+        ],
+        "effort": null,
+        "type": "user_story"
+      },
+      {
+        "canonical_id": "cbl_7dff6ef9-c738-5b3e-88e5-2c06cce4d722",
+        "title": "Working portal MVP",
+        "description": "",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": null,
+        "child_ids": [],
+        "acceptance_criteria": [],
+        "test_requirements": [],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.sow.deliverables[0]",
+            "field_name": "deliverables",
+            "excerpt": "Working portal MVP"
+          }
+        ],
+        "effort": null,
+        "type": "task"
+      },
+      {
+        "canonical_id": "cbl_2cad0eb4-8d78-518e-bd37-f95f63c416d5",
+        "title": "Renewal confirmation email",
+        "description": "",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": null,
+        "child_ids": [],
+        "acceptance_criteria": [],
+        "test_requirements": [],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.sow.deliverables[1]",
+            "field_name": "deliverables",
+            "excerpt": "Renewal confirmation email"
+          }
+        ],
+        "effort": null,
+        "type": "task"
+      },
+      {
+        "canonical_id": "cbl_aa9ca6fa-efc0-53ad-a0e4-dac98a7920b9",
+        "title": "Discovery",
+        "description": "",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": null,
+        "child_ids": [],
+        "acceptance_criteria": [],
+        "test_requirements": [],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.delivery_plan.delivery_phases[0]",
+            "field_name": "delivery_phases",
+            "excerpt": "Discovery"
+          }
+        ],
+        "effort": null,
+        "type": "task"
+      },
+      {
+        "canonical_id": "cbl_29363fa1-442f-58ca-9753-e61f0ac7c7f4",
+        "title": "Build",
+        "description": "",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": null,
+        "child_ids": [],
+        "acceptance_criteria": [],
+        "test_requirements": [],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.delivery_plan.delivery_phases[1]",
+            "field_name": "delivery_phases",
+            "excerpt": "Build"
+          }
+        ],
+        "effort": null,
+        "type": "task"
+      },
+      {
+        "canonical_id": "cbl_df30fa88-e978-5b9c-8cc7-7c1f7e45d366",
+        "title": "Launch",
+        "description": "",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": null,
+        "child_ids": [],
+        "acceptance_criteria": [],
+        "test_requirements": [],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.delivery_plan.delivery_phases[2]",
+            "field_name": "delivery_phases",
+            "excerpt": "Launch"
+          }
+        ],
+        "effort": null,
+        "type": "task"
+      },
+      {
+        "canonical_id": "cbl_1122de7d-0781-544c-b9a9-4cdbe92adfc0",
+        "title": "MVP renewal journey available",
+        "description": "",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": null,
+        "child_ids": [],
+        "acceptance_criteria": [],
+        "test_requirements": [],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.delivery_plan.milestones[0]",
+            "field_name": "milestones",
+            "excerpt": "MVP renewal journey available"
+          }
+        ],
+        "effort": null,
+        "type": "subtask"
+      }
+    ],
+    "source_contract_id": "copilot.workflow_response.v1",
+    "source_provenance": [
+      {
+        "contract_id": "copilot.workflow_response.v1",
+        "json_path": "$.user_request",
+        "field_name": "user_request",
+        "excerpt": "Build a customer self-service portal for insurance policy renewals."
+      }
+    ]
+  },
+  "findings": {
+    "contract_id": "canonical.generation_findings.v1",
+    "items": [
+      {
+        "severity": "info",
+        "code": "OUT_OF_SCOPE_EXCLUDED",
+        "message": "Source text is explicitly out of scope and was not generated as a backlog item.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.solution.key_capabilities[2]",
+            "field_name": "key_capabilities",
+            "excerpt": "Claims adjudication workspace"
+          },
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.sow.out_of_scope[0]",
+            "field_name": "out_of_scope",
+            "excerpt": "Claims adjudication workspace"
+          }
+        ],
+        "canonical_ids": []
+      },
+      {
+        "severity": "warning",
+        "code": "AMBIGUOUS_DECOMPOSITION",
+        "message": "User stories were not linked to a parent because Copilot does not name exactly one in-scope feature.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.functional_requirements[0]",
+            "field_name": "functional_requirements",
+            "excerpt": "The system shall allow a customer to renew an eligible policy online."
+          },
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.functional_requirements[1]",
+            "field_name": "functional_requirements",
+            "excerpt": "The system shall send a renewal confirmation to the customer."
+          },
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.functional_requirements[2]",
+            "field_name": "functional_requirements",
+            "excerpt": "The system shall display current premium and coverage before confirmation."
+          }
+        ],
+        "canonical_ids": [
+          "cbl_67be7a79-123e-5a71-9b65-f2a28e5cbc8f",
+          "cbl_88587408-151b-50bf-9619-a1c0f02825da",
+          "cbl_cf01441a-be72-54b0-8722-3b89870174c8"
+        ]
+      },
+      {
+        "severity": "warning",
+        "code": "AMBIGUOUS_DECOMPOSITION",
+        "message": "Tasks were not linked to a parent because Copilot does not name exactly one in-scope user story.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.sow.deliverables[0]",
+            "field_name": "deliverables",
+            "excerpt": "Working portal MVP"
+          },
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.sow.deliverables[1]",
+            "field_name": "deliverables",
+            "excerpt": "Renewal confirmation email"
+          },
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.delivery_plan.delivery_phases[0]",
+            "field_name": "delivery_phases",
+            "excerpt": "Discovery"
+          },
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.delivery_plan.delivery_phases[1]",
+            "field_name": "delivery_phases",
+            "excerpt": "Build"
+          },
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.delivery_plan.delivery_phases[2]",
+            "field_name": "delivery_phases",
+            "excerpt": "Launch"
+          }
+        ],
+        "canonical_ids": [
+          "cbl_7dff6ef9-c738-5b3e-88e5-2c06cce4d722",
+          "cbl_2cad0eb4-8d78-518e-bd37-f95f63c416d5",
+          "cbl_aa9ca6fa-efc0-53ad-a0e4-dac98a7920b9",
+          "cbl_29363fa1-442f-58ca-9753-e61f0ac7c7f4",
+          "cbl_df30fa88-e978-5b9c-8cc7-7c1f7e45d366"
+        ]
+      },
+      {
+        "severity": "warning",
+        "code": "AMBIGUOUS_DECOMPOSITION",
+        "message": "Milestones were not linked to a parent because Copilot does not name exactly one in-scope task.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.delivery_plan.milestones[0]",
+            "field_name": "milestones",
+            "excerpt": "MVP renewal journey available"
+          }
+        ],
+        "canonical_ids": [
+          "cbl_1122de7d-0781-544c-b9a9-4cdbe92adfc0"
+        ]
+      },
+      {
+        "severity": "warning",
+        "code": "AMBIGUOUS_DECOMPOSITION",
+        "message": "Acceptance criteria were not copied onto user stories because Copilot does not bind them to a single functional requirement.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.acceptance_criteria",
+            "field_name": "acceptance_criteria",
+            "excerpt": null
+          }
+        ],
+        "canonical_ids": [
+          "cbl_67be7a79-123e-5a71-9b65-f2a28e5cbc8f",
+          "cbl_88587408-151b-50bf-9619-a1c0f02825da",
+          "cbl_cf01441a-be72-54b0-8722-3b89870174c8"
+        ]
+      }
+    ]
+  }
+}

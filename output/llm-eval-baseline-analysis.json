@@ -1,0 +1,204 @@
+{
+  "input": "C:\\Repo\\LimoutAI\\limout-ai-delivery-backlog-agent\\input\\copilot-complete.json",
+  "baseline": "C:\\Repo\\LimoutAI\\limout-ai-delivery-backlog-agent\\output\\real-backlog.json",
+  "envelope_status": "COMPLETE",
+  "envelope_workflow_status": "COMPLETE",
+  "baseline_type_counts": {
+    "epic": 1,
+    "feature": 11,
+    "user_story": 5,
+    "task": 10,
+    "subtask": 6
+  },
+  "baseline_item_count": 33,
+  "unparented_non_epic_count": 21,
+  "unparented_non_epic": [
+    {
+      "type": "user_story",
+      "title": "The system shall allow eligible customers to review existing personal motor and \u2026"
+    },
+    {
+      "type": "user_story",
+      "title": "The system shall allow eligible customers to submit renewal requests for existin\u2026"
+    },
+    {
+      "type": "user_story",
+      "title": "The system shall retrieve policy information from and submit renewal requests to\u2026"
+    },
+    {
+      "type": "user_story",
+      "title": "The system shall authenticate customers using the existing identity provider."
+    },
+    {
+      "type": "user_story",
+      "title": "The system shall utilize the existing email delivery service to send confirmatio\u2026"
+    },
+    {
+      "type": "task",
+      "title": "Secure MVP web portal for online policy review and renewal"
+    },
+    {
+      "type": "task",
+      "title": "Customer authentication integration using the existing identity provider"
+    },
+    {
+      "type": "task",
+      "title": "API integration with the existing policy administration system as the source of \u2026"
+    },
+    {
+      "type": "task",
+      "title": "Automated confirmation email triggers utilizing the existing email delivery serv\u2026"
+    },
+    {
+      "type": "task",
+      "title": "Deployment and launch documentation"
+    },
+    {
+      "type": "task",
+      "title": "Inception and Feasibility Assessment"
+    },
+    {
+      "type": "task",
+      "title": "Design and Architecture"
+    },
+    {
+      "type": "task",
+      "title": "MVP Core Development"
+    },
+    {
+      "type": "task",
+      "title": "Integration and Testing"
+    },
+    {
+      "type": "task",
+      "title": "Deployment and Launch"
+    },
+    {
+      "type": "subtask",
+      "title": "Feasibility Assessment Complete"
+    },
+    {
+      "type": "subtask",
+      "title": "Architecture and Design Sign-off"
+    },
+    {
+      "type": "subtask",
+      "title": "Core Integration Verified with Policy Administration System"
+    },
+    {
+      "type": "subtask",
+      "title": "MVP Feature Complete"
+    },
+    {
+      "type": "subtask",
+      "title": "User Acceptance Testing Passed"
+    },
+    {
+      "type": "subtask",
+      "title": "Production Launch"
+    }
+  ],
+  "epic_title_chars": 6375,
+  "epic_title_is_full_markdown_request": true,
+  "feature_count": 11,
+  "capability_feature_count": 5,
+  "workstream_feature_count": 6,
+  "workstream_feature_titles": [
+    "Product Management and Governance",
+    "UX/UI Design",
+    "Frontend Development",
+    "Backend and Integration",
+    "Quality Assurance and Testing",
+    "Operations and Support"
+  ],
+  "capability_feature_titles": [
+    "Customer authentication via the existing identity provider",
+    "Online review of existing personal motor and home insurance policies",
+    "Online submission of policy renewal requests",
+    "Triggering of confirmation emails via the existing email delivery service",
+    "Integration with the existing policy administration system acting as the source of truth"
+  ],
+  "stories_total": 5,
+  "functional_requirements": [
+    "The system shall allow eligible customers to review existing personal motor and home insurance policies online via a secure web portal.",
+    "The system shall allow eligible customers to submit renewal requests for existing insurance policies online.",
+    "The system shall retrieve policy information from and submit renewal requests to the existing policy administration system.",
+    "The system shall authenticate customers using the existing identity provider.",
+    "The system shall utilize the existing email delivery service to send confirmation emails."
+  ],
+  "covered_fr_paths": [
+    "$.requirements.functional_requirements[0]",
+    "$.requirements.functional_requirements[1]",
+    "$.requirements.functional_requirements[2]",
+    "$.requirements.functional_requirements[3]",
+    "$.requirements.functional_requirements[4]"
+  ],
+  "uncovered_frs": [],
+  "stories_with_description": 0,
+  "stories_with_acceptance_criteria": 0,
+  "stories_with_test_requirements": 0,
+  "items_with_description": 0,
+  "items_with_dependencies": 0,
+  "tasks_total": 10,
+  "subtasks_total": 6,
+  "sow_out_of_scope": [
+    "Complete insurance platform implementation beyond the defined MVP",
+    "Replacing the existing policy administration system as the source of truth",
+    "Unconfirmed regulatory compliance modules",
+    "Definitive internal customer service application updates beyond potential future visibility enhancements"
+  ],
+  "items_matching_out_of_scope_substring": [],
+  "provenance_ok_count": 33,
+  "provenance_bad_count": 0,
+  "provenance_bad": [],
+  "finding_codes": {
+    "AMBIGUOUS_DECOMPOSITION": 4
+  },
+  "finding_severities": {
+    "warning": 4
+  },
+  "finding_count": 4,
+  "phases": [
+    "Inception and Feasibility Assessment",
+    "Design and Architecture",
+    "MVP Core Development",
+    "Integration and Testing",
+    "Deployment and Launch"
+  ],
+  "milestones": [
+    "Feasibility Assessment Complete",
+    "Architecture and Design Sign-off",
+    "Core Integration Verified with Policy Administration System",
+    "MVP Feature Complete",
+    "User Acceptance Testing Passed",
+    "Production Launch"
+  ],
+  "task_titles": [
+    "Secure MVP web portal for online policy review and renewal",
+    "Customer authentication integration using the existing identity provider",
+    "API integration with the existing policy administration system as the source of truth",
+    "Automated confirmation email triggers utilizing the existing email delivery service",
+    "Deployment and launch documentation",
+    "Inception and Feasibility Assessment",
+    "Design and Architecture",
+    "MVP Core Development",
+    "Integration and Testing",
+    "Deployment and Launch"
+  ],
+  "subtask_titles": [
+    "Feasibility Assessment Complete",
+    "Architecture and Design Sign-off",
+    "Core Integration Verified with Policy Administration System",
+    "MVP Feature Complete",
+    "User Acceptance Testing Passed",
+    "Production Launch"
+  ],
+  "story_titles": [
+    "The system shall allow eligible customers to review existing personal motor and home insurance policies online via a secure web portal.",
+    "The system shall allow eligible customers to submit renewal requests for existing insurance policies online.",
+    "The system shall retrieve policy information from and submit renewal requests to the existing policy administration system.",
+    "The system shall authenticate customers using the existing identity provider.",
+    "The system shall utilize the existing email delivery service to send confirmation emails."
+  ],
+  "generated_content_findings": 0
+}

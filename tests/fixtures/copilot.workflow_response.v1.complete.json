@@ -1,0 +1,51 @@
+{
+  "workflow_status": "COMPLETE",
+  "status": "COMPLETE",
+  "user_request": "Build a customer self-service portal for insurance policy renewals.",
+  "executive_summary": "Replace emailed renewal packs with an authenticated customer portal for eligible policies.",
+  "requirements": {
+    "functional_requirements": [
+      "The system shall allow a customer to renew an eligible policy online.",
+      "The system shall send a renewal confirmation to the customer.",
+      "The system shall display current premium and coverage before confirmation."
+    ],
+    "acceptance_criteria": [
+      "Given an eligible policy, when the customer confirms renewal, then a confirmation record is stored."
+    ]
+  },
+  "solution": {
+    "key_capabilities": [
+      "Authenticated customer portal",
+      "Policy renewal workflow",
+      "Claims adjudication workspace"
+    ]
+  },
+  "delivery_plan": {
+    "delivery_phases": [
+      "Discovery",
+      "Build",
+      "Launch"
+    ],
+    "workstreams": [
+      "Customer portal",
+      "Notifications"
+    ],
+    "milestones": [
+      "MVP renewal journey available"
+    ]
+  },
+  "sow": {
+    "in_scope": [
+      "Customer self-service policy renewal",
+      "Renewal confirmation notifications"
+    ],
+    "out_of_scope": [
+      "Claims adjudication workspace",
+      "Broker commission management"
+    ],
+    "deliverables": [
+      "Working portal MVP",
+      "Renewal confirmation email"
+    ]
+  }
+}
