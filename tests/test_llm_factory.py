@@ -8,6 +8,7 @@ from backlog_agent.llm.mock import MockProvider
 
 
 def test_get_provider_defaults_to_gemini_and_requires_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("backlog_agent.llm.factory._load_dotenv", lambda: None)
     monkeypatch.delenv("AI_PROVIDER", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 

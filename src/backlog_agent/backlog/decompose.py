@@ -24,6 +24,7 @@ from backlog_agent.backlog.models import (
     WorkItemStatus,
     WorkItemType,
 )
+from backlog_agent.backlog.granularity import record_granularity_findings, task_restates_parent
 from backlog_agent.backlog.proposal import (
     BacklogProposal,
     ContentOrigin,
@@ -47,6 +48,18 @@ _PARENT_TYPE: dict[WorkItemType, WorkItemType | None] = {
     WorkItemType.TASK: WorkItemType.USER_STORY,
     WorkItemType.SUBTASK: WorkItemType.TASK,
 }
+
+_QUALITY_REPAIR_CODES = frozenset(
+    {
+        FindingCode.OVERSIZED_STORY,
+        FindingCode.MISSING_IMPLEMENTATION_DETAIL,
+        FindingCode.OVERLAPPING_STORY_RESPONSIBILITY,
+        FindingCode.DUPLICATE_ACCEPTANCE_CRITERION,
+    }
+)
+
+_FUNCTIONAL_REQUIREMENT_PATH = "$.requirements.functional_requirements"
+_NON_FUNCTIONAL_REQUIREMENT_PATH = "$.requirements.non_functional_requirements"
 
 _GENERIC_TASK_TITLES = frozenset(
     {
@@ -78,9 +91,11 @@ def decompose_backlog(
 ) -> tuple[CanonicalBacklogV1, GenerationFindings]:
     """Propose a canonical backlog via ``provider``, then validate it in Python.
 
-    At most one repair call is made when the first proposal fails validation.
-    The model cannot mark the result valid; ``CanonicalBacklogV1`` and coverage
-    checks remain deterministic.
+    At most one repair call is made in addition to the initial generation:
+    a hard-validation repair if the first proposal fails, or a quality repair
+    if it succeeds with actionable quality findings. Never both. The model
+    cannot mark the result valid; ``CanonicalBacklogV1`` and coverage checks
+    remain deterministic.
     """
 
     source = load_project_source(envelope)
@@ -90,6 +105,14 @@ def decompose_backlog(
     result = _try_materialize(source, raw)
 
     if result.ok:
+        quality = _actionable_quality_findings(result.findings)
+        if repair and quality:
+            quality_prompt = _build_quality_repair_prompt(prompt, raw, quality)
+            repaired = provider.generate_json(quality_prompt, schema)
+            second = _try_materialize(source, repaired)
+            if second.ok:
+                return second.backlog, GenerationFindings(items=second.findings.items)
+            return result.backlog, GenerationFindings(items=result.findings.items)
         return result.backlog, GenerationFindings(items=result.findings.items)
 
     if repair:
@@ -169,7 +192,7 @@ def _try_materialize(source: NormalizedProjectSource, raw: Mapping[str, Any]) ->
     _record_uncertainties(proposal, backlog, findings)
     _record_prerequisites(proposal, findings)
     _record_requirement_coverage_findings(source, backlog.items, findings)
-    _record_atomic_stories(backlog, findings)
+    record_granularity_findings(source, backlog, findings, proposal=proposal)
     return _MaterializeResult(ok=True, errors=[], findings=findings, backlog=backlog)
 
 
@@ -282,7 +305,13 @@ def _provenance_and_scope_errors(
 
         if item.title_origin is ContentOrigin.SOURCE:
             excerpts = [ref.excerpt for ref in item.provenance if ref.excerpt]
-            if item.title not in excerpts:
+            if _title_is_exact_source_copy(item.title, excerpts):
+                pass
+            elif _title_is_grounded_paraphrase(item.title, excerpts):
+                # Concise epic titles drawn from a longer source field are generated,
+                # not source copies. Correct the origin; keep provenance grounding.
+                item.title_origin = ContentOrigin.GENERATED
+            else:
                 errors.append(
                     f"{item.local_id}: title_origin=source but title is not equal to any provenance excerpt"
                 )
@@ -476,6 +505,7 @@ def _execution_quality_errors(source: NormalizedProjectSource, proposal: Backlog
         tuple(fact for fact in source.non_functional_requirements if fact.is_timeline_or_estimate)
     )
     seen_task_titles: dict[str, str] = {}
+    by_local = {item.local_id: item for item in proposal.items}
 
     for item in proposal.items:
         if item.type is WorkItemType.USER_STORY:
@@ -484,6 +514,17 @@ def _execution_quality_errors(source: NormalizedProjectSource, proposal: Backlog
             elif _is_title_restatement(item.title, item.description):
                 errors.append(
                     f"{item.local_id}: description restates the title; describe actor, behaviour, and outcome"
+                )
+            paths = [reference.json_path for reference in item.provenance]
+            has_functional = any(_is_requirement_path(path, _FUNCTIONAL_REQUIREMENT_PATH) for path in paths)
+            has_non_functional = any(
+                _is_requirement_path(path, _NON_FUNCTIONAL_REQUIREMENT_PATH) for path in paths
+            )
+            if has_non_functional and not has_functional:
+                errors.append(
+                    f"{item.local_id}: user stories must not be created from a non-functional "
+                    "requirement alone; attach that constraint's path and excerpt to a story "
+                    "that cites a functional requirement"
                 )
 
         if item.type is WorkItemType.FEATURE and normalize_source_text(item.title) in workstreams:
@@ -505,6 +546,11 @@ def _execution_quality_errors(source: NormalizedProjectSource, proposal: Backlog
             normalized = normalize_source_text(item.title)
             if normalized in _GENERIC_TASK_TITLES or len(normalized) < 12:
                 errors.append(f"{item.local_id}: generic or filler task title {item.title!r}")
+            parent = by_local.get(item.parent_local_id) if item.parent_local_id else None
+            if task_restates_parent(item, parent):
+                errors.append(
+                    f"{item.local_id}: task restates the parent item; split into concrete engineering work"
+                )
             if normalized in workstreams:
                 errors.append(
                     f"{item.local_id}: delivery workstreams must not be copied as tasks"
@@ -522,6 +568,38 @@ def _execution_quality_errors(source: NormalizedProjectSource, proposal: Backlog
                 seen_task_titles[normalized] = item.local_id
 
     return errors
+
+
+def _title_is_exact_source_copy(title: str, excerpts: list[str]) -> bool:
+    normalized_title = normalize_source_text(title)
+    if not normalized_title:
+        return False
+    return any(
+        title == excerpt or normalized_title == normalize_source_text(excerpt)
+        for excerpt in excerpts
+        if excerpt
+    )
+
+
+def _title_is_grounded_paraphrase(title: str, excerpts: list[str]) -> bool:
+    normalized_title = normalize_source_text(title)
+    if len(normalized_title) < 12:
+        return False
+    for excerpt in excerpts:
+        if not excerpt:
+            continue
+        normalized_excerpt = normalize_source_text(excerpt)
+        if not normalized_excerpt:
+            continue
+        if normalized_title in normalized_excerpt:
+            return True
+        if len(normalized_excerpt) >= 12 and normalized_excerpt in normalized_title:
+            return True
+    return False
+
+
+def _is_requirement_path(json_path: str, prefix: str) -> bool:
+    return json_path == prefix or json_path.startswith(prefix + "[")
 
 
 def _is_title_restatement(title: str, description: str) -> bool:
@@ -677,32 +755,6 @@ def _record_requirement_coverage_findings(
         )
 
 
-def _record_atomic_stories(backlog: CanonicalBacklogV1, findings: _FindingSink) -> None:
-    by_id = {item.canonical_id: item for item in backlog.items}
-    for item in backlog.items:
-        if item.type is not WorkItemType.USER_STORY:
-            continue
-        task_children = [
-            child_id
-            for child_id in item.child_ids
-            if by_id.get(child_id) is not None and by_id[child_id].type is WorkItemType.TASK
-        ]
-        if task_children:
-            continue
-        findings.add(
-            Finding(
-                severity=FindingSeverity.INFO,
-                code=FindingCode.ATOMIC_STORY,
-                message=(
-                    "User story has no child tasks; treated as an atomic implementable slice "
-                    "rather than incomplete decomposition."
-                ),
-                canonical_ids=[item.canonical_id],
-                source_references=list(item.provenance),
-            )
-        )
-
-
 def _record_uncertainties(
     proposal: BacklogProposal,
     backlog: CanonicalBacklogV1,
@@ -738,6 +790,27 @@ def _build_prompt(source: NormalizedProjectSource) -> str:
     return (
         "You decompose normalized project facts into a tracker-independent software backlog. "
         "Return JSON only, matching the supplied schema. Do not assume a particular industry.\n\n"
+        "Sizing heuristics (planning guidance, not estimates; do not invent story points, hours, "
+        "or delivery commitments):\n"
+        "- Epic: a substantial business outcome spanning multiple stories.\n"
+        "- Feature: a coherent product capability grouping related stories.\n"
+        "- User Story: one meaningful, independently testable user or system outcome, normally "
+        "about one sprint of work. Treat two sprints as a warning threshold, not a hard rule. "
+        "If a requirement bundles independent outcomes, split into multiple stories. Each story "
+        "must still cite the relevant functional requirement path and excerpt.\n"
+        "- Task: concrete implementation or verification that one contributor can normally finish "
+        "in a few days. Split journey-sized tasks. Do not copy the parent story title as the task.\n"
+        "- Subtask: optional, only when it improves execution tracking.\n"
+        "- Consider implementation, integration, error handling, security, testing, observability, "
+        "and operations only when the source or solution context makes them relevant. Do not invent "
+        "architecture or filler work. If the source is too thin to decompose safely, record "
+        "uncertainties or prerequisites instead.\n"
+        "- Do not force a Task under every Story. Atomic stories remain valid when the story is "
+        "already a concrete slice. Do not artificially split work into duplicate or numbered filler.\n"
+        "- Trace non-functional requirements by putting their exact source path on the item that "
+        "implements or verifies them. Do not create a user_story whose provenance contains a "
+        "non-functional requirement path but no functional requirement path. NFRs are constraints "
+        "on related functional work, not standalone stories.\n\n"
         "Product tree:\n"
         "- One concise Epic title. Do not paste the entire request as the title.\n"
         "- Features are in-scope product capabilities. Do not copy delivery workstreams into Features.\n"
@@ -746,7 +819,14 @@ def _build_prompt(source: NormalizedProjectSource) -> str:
         "- Story descriptions must explain actor, behaviour, and outcome. Do not restate the title.\n"
         "- Bind source acceptance criteria onto the story they most clearly verify and mark "
         "acceptance_criteria_origins as source. Additional story-specific criteria may be proposed "
-        "with origin generated. If binding is uncertain, say so in uncertainties.\n"
+        "with origin generated. If a source acceptance criterion concatenates independently owned "
+        "outcomes, do not copy that entire criterion onto every involved story. Create generated "
+        "acceptance criteria scoped to each story's owned outcome. Keep source_excerpt and json_path "
+        "accurate to the original compound criterion or the matching functional requirement. Never "
+        "mark rewritten or shortened criterion text as origin=source. Both functional requirements "
+        "must remain covered. Do not invent additional systems, endpoints, databases, workflows, "
+        "or acceptance criteria the source does not state. If binding is uncertain, say so in "
+        "uncertainties.\n"
         "- Acceptance criteria are observable outcomes. test_requirements are verification activities "
         "(tests to run, data to assert, integrations to stub). They must not copy acceptance criteria. "
         "Mark test_requirements generated.\n"
@@ -767,13 +847,83 @@ def _build_prompt(source: NormalizedProjectSource) -> str:
         "timeline or estimate constraint into a committed milestone, date, or work item.\n"
         "- Trace a non-functional requirement only by putting its exact source path and excerpt on an "
         "item that implements or verifies that constraint. A related Feature or Story without that "
-        "path does not count as coverage. Timeline and estimate statements are planning constraints.\n"
-        "- title_origin=source only when title equals a provenance excerpt. Provenance excerpts must "
+        "path does not count as coverage. Do not promote an NFR into its own user_story. Timeline "
+        "and estimate statements are planning constraints, not committed work items.\n"
+        "- title_origin=source only when title equals a provenance excerpt. A concise epic title "
+        "taken from a longer request or heading is generated, not source. Provenance excerpts must "
         "equal the source field. Preserve remaining uncertainty in uncertainties.\n"
         "- local_id values are your own stable keys (not tracker keys, not cbl_ ids).\n"
-        "- Hierarchy is epic→feature→user_story→task→subtask.\n\n"
+        "- Hierarchy is epic→feature→user_story→task→subtask.\n"
+        "- Provenance json_path must be the Copilot envelope path on each fact (the fact's json_path "
+        "value). Do not cite prompt-object keys or adapter attribute names such as $.contract_id, "
+        "$.capabilities, $.functional_requirements, $.acceptance_criteria, "
+        "$.non_functional_requirements, or $.blocking_dependencies. Array facts require the indexed "
+        "envelope path (for example $.requirements.functional_requirements[0]).\n\n"
         "Normalized project facts:\n"
         f"{json.dumps(source.prompt_facts, ensure_ascii=False, indent=2)}\n"
+    )
+
+
+def _actionable_quality_findings(findings: _FindingSink) -> list[Finding]:
+    return [item for item in findings.items if item.code in _QUALITY_REPAIR_CODES]
+
+
+def _quality_finding_payload(finding: Finding) -> dict[str, Any]:
+    return {
+        "code": finding.code.value,
+        "message": finding.message,
+        "canonical_ids": list(finding.canonical_ids),
+        "local_ids": list(finding.local_ids),
+        "source_paths": [reference.json_path for reference in finding.source_references],
+    }
+
+
+def _build_quality_repair_prompt(
+    original_prompt: str,
+    previous: Mapping[str, Any],
+    findings: list[Finding],
+) -> str:
+    listed = json.dumps(
+        [_quality_finding_payload(item) for item in findings],
+        ensure_ascii=False,
+        indent=2,
+    )
+    return (
+        f"{original_prompt}\n\n"
+        "The previous JSON passed deterministic validation but has actionable quality "
+        "findings. Return a corrected JSON object for the same project facts. Do not "
+        "mark the output as valid yourself. Resolve the named pairwise overlaps in the "
+        "findings; do not broadly rewrite unrelated items.\n"
+        "Repair guidance:\n"
+        "- Canonical IDs identify persisted review items only. Proposal items use local_id. "
+        "Match each overlap finding to previous JSON items by local_ids in the finding, then "
+        "by title if a local_id is absent. Never treat a canonical UUID or cbl_ id as a "
+        "proposal local_id.\n"
+        "- Use each finding's message (titles, canonical IDs, proposal local_ids, overlapping "
+        "action, evidence, and remediation) to locate the named pair. Fix that pair only.\n"
+        "- When one story owns an action named in a finding, remove that leaked action from "
+        "the non-owning story's description and acceptance criteria. Keep both stories when "
+        "each is independently required for functional-requirement coverage.\n"
+        "- If a source acceptance criterion concatenates independently owned outcomes, replace "
+        "the compound copy with generated acceptance criteria scoped to each story. Keep "
+        "source excerpts and json_path accurate. Never mark edited criterion text as "
+        "origin=source.\n"
+        "- Split a Story only when source evidence supports independently testable outcomes.\n"
+        "- Remove duplicated responsibilities and acceptance criteria across Stories.\n"
+        "- Add concrete child Tasks only when the source supports distinct implementation "
+        "or verification work.\n"
+        "- Treat non-functional requirements as constraints on relevant work, not "
+        "automatically as separate technical stories. Never add a user_story whose only "
+        "requirement provenance is a non-functional requirement; attach that path to related "
+        "functional work instead.\n"
+        "- Preserve source provenance, requirement coverage, valid dependencies, scope, "
+        "and local_id values for unchanged items.\n"
+        "- If implementation detail is unavailable, record a specific uncertainty or "
+        "prerequisite rather than inventing architecture, local databases, endpoints, "
+        "API contracts, payload formats, or business rules.\n"
+        f"Quality findings:\n{listed}\n\n"
+        "Previous JSON:\n"
+        f"{json.dumps(previous, ensure_ascii=False)}\n"
     )
 
 

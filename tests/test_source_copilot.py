@@ -17,6 +17,10 @@ def test_copilot_adapter_extracts_generic_facts() -> None:
     assert source.out_of_scope
     assert "Claims adjudication workspace" in {fact.text for fact in source.out_of_scope}
     assert source.prompt_facts["functional_requirements"]
+    assert source.prompt_facts["functional_requirements"][0]["json_path"] == (
+        "$.requirements.functional_requirements[0]"
+    )
+    assert source.prompt_facts["request"]["json_path"] == "$.user_request"
 
 
 def test_unsupported_arbitrary_json_is_rejected() -> None:

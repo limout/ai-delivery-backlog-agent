@@ -130,6 +130,130 @@ def test_nfr_traced_when_applicable() -> None:
         item for item in findings.items if item.code is FindingCode.UNCOVERED_NON_FUNCTIONAL_REQUIREMENT
     ]
     assert uncovered == []
+    assert any(item.type is WorkItemType.USER_STORY for item in _backlog.items)
+
+
+def test_nfr_only_user_story_is_rejected() -> None:
+    payload = load_fixture()
+    nfr = "Encrypt sensitive information in transit."
+    payload["requirements"]["non_functional_requirements"] = [nfr]
+    proposal = execution_ready_proposal()
+    proposal["items"].append(
+        {
+            "local_id": "story-nfr-only",
+            "type": "user_story",
+            "title": "Enforce the encryption constraint",
+            "description": (
+                "A system operator needs the encryption constraint treated as its own "
+                "deliverable so it can be tracked separately from functional outcomes."
+            ),
+            "parent_local_id": "feat-renewal",
+            "depends_on_local_ids": [],
+            "acceptance_criteria": [],
+            "test_requirements": [],
+            "provenance": [
+                {
+                    "json_path": "$.requirements.non_functional_requirements[0]",
+                    "field_name": "non_functional_requirements",
+                    "excerpt": nfr,
+                }
+            ],
+            "title_origin": "generated",
+            "description_origin": "generated",
+            "uncertainties": [],
+        }
+    )
+    with pytest.raises(DecompositionValidationError) as exc:
+        decompose_backlog(
+            CopilotWorkflowResponseV1.model_validate(payload),
+            MockProvider(proposal),
+            repair=False,
+        )
+    assert any("non-functional requirement alone" in error for error in exc.value.errors)
+
+
+def test_nfr_attached_to_fr_backed_story_covers_the_constraint() -> None:
+    payload = load_fixture()
+    nfr = "Encrypt sensitive information in transit."
+    payload["requirements"]["non_functional_requirements"] = [nfr]
+    proposal = execution_ready_proposal()
+    story = next(item for item in proposal["items"] if item["local_id"] == "story-renew")
+    story["provenance"].append(
+        {
+            "json_path": "$.requirements.non_functional_requirements[0]",
+            "field_name": "non_functional_requirements",
+            "excerpt": nfr,
+        }
+    )
+    backlog, findings = decompose_backlog(
+        CopilotWorkflowResponseV1.model_validate(payload),
+        MockProvider(proposal),
+        repair=False,
+    )
+    assert any(item.type is WorkItemType.USER_STORY for item in backlog.items)
+    assert not any(
+        item.code is FindingCode.UNCOVERED_NON_FUNCTIONAL_REQUIREMENT for item in findings.items
+    )
+
+
+def test_timeline_nfr_stays_a_planning_constraint_not_a_story() -> None:
+    payload = load_fixture()
+    timeline = (
+        "The web portal must be delivered as a secure MVP within approximately 12 weeks "
+        "pending feasibility assessment."
+    )
+    payload["requirements"]["non_functional_requirements"] = [timeline]
+    proposal = execution_ready_proposal()
+    backlog, findings = decompose_backlog(
+        CopilotWorkflowResponseV1.model_validate(payload),
+        MockProvider(proposal),
+        repair=False,
+    )
+    assert any(item.code is FindingCode.PLANNING_CONSTRAINT for item in findings.items)
+    assert not any(
+        item.code is FindingCode.UNCOVERED_NON_FUNCTIONAL_REQUIREMENT for item in findings.items
+    )
+    assert not any(
+        any(
+            (ref.json_path or "").startswith("$.requirements.non_functional_requirements")
+            for ref in item.provenance
+        )
+        and item.type is WorkItemType.USER_STORY
+        for item in backlog.items
+    )
+
+    proposal["items"].append(
+        {
+            "local_id": "story-timeline",
+            "type": "user_story",
+            "title": "Track the delivery window as a backlog item",
+            "description": (
+                "A stakeholder wants the delivery window tracked as its own story so the "
+                "constraint is visible independently of functional work."
+            ),
+            "parent_local_id": "feat-renewal",
+            "depends_on_local_ids": [],
+            "acceptance_criteria": [],
+            "test_requirements": [],
+            "provenance": [
+                {
+                    "json_path": "$.requirements.non_functional_requirements[0]",
+                    "field_name": "non_functional_requirements",
+                    "excerpt": timeline,
+                }
+            ],
+            "title_origin": "generated",
+            "description_origin": "generated",
+            "uncertainties": [],
+        }
+    )
+    with pytest.raises(DecompositionValidationError) as exc:
+        decompose_backlog(
+            CopilotWorkflowResponseV1.model_validate(payload),
+            MockProvider(proposal),
+            repair=False,
+        )
+    assert any("non-functional requirement alone" in error for error in exc.value.errors)
 
 
 def test_untraced_nfr_is_warning_not_hard_failure() -> None:

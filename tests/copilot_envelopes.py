@@ -63,6 +63,73 @@ def library_holds_envelope() -> dict[str, Any]:
     )
 
 
+def municipal_permits_envelope() -> dict[str, Any]:
+    return _complete(
+        user_request="Build a municipal permitting desk so residents can apply, pay, and track decisions.",
+        executive_summary="Replace paper permit applications with a resident self-service desk.",
+        requirements={
+            "functional_requirements": [
+                "The system shall let a resident apply for a permit, upload evidence, pay the fee, and track status until a decision is issued.",
+                "The system shall publish the office holiday calendar to residents.",
+                "The system shall let a clerk attach a decision letter to an application.",
+            ],
+            "acceptance_criteria": [
+                "Given a complete application, when the resident pays the fee, then the application is queued for review."
+            ],
+            "non_functional_requirements": [
+                "Uploaded evidence must be encrypted at rest.",
+                "Go-live is desired within 10 weeks pending feasibility assessment.",
+            ],
+            "open_questions": [
+                "The evidence file format and maximum size are unspecified.",
+            ],
+        },
+        solution={
+            "key_capabilities": [
+                "Resident permit desk",
+                "Clerk decision recording",
+            ]
+        },
+        sow={
+            "in_scope": ["Resident applications", "Clerk decisions"],
+            "out_of_scope": ["Building inspections in the field"],
+            "deliverables": ["Application intake form", "Decision letter attachment"],
+            "dependencies": ["Payment processor sandbox access is not granted."],
+        },
+    )
+
+
+def pickup_notice_envelope() -> dict[str, Any]:
+    return _complete(
+        user_request="Build a catalog so members can place holds and receive pickup notices.",
+        executive_summary="Members place holds and receive pickup notices when copies are ready.",
+        requirements={
+            "functional_requirements": [
+                "The system shall let a member place a hold on an available copy.",
+                "The system shall send a pickup notice when a held copy is ready.",
+            ],
+            "acceptance_criteria": [
+                "A member can place a hold on an available copy and trigger a pickup notice "
+                "via the notice service."
+            ],
+            "non_functional_requirements": [
+                "Catalog search p95 latency must stay under 400 milliseconds.",
+            ],
+        },
+        solution={
+            "key_capabilities": [
+                "Place holds on available copies.",
+                "Send pickup notices when held copies are ready.",
+            ]
+        },
+        sow={
+            "in_scope": ["Member holds", "Pickup notices"],
+            "out_of_scope": ["Interlibrary loan routing"],
+            "deliverables": ["Hold placement", "Pickup notice delivery"],
+        },
+    )
+
+
 def warehouse_picking_envelope() -> dict[str, Any]:
     return _complete(
         user_request="Build a warehouse picking app so operators can receive pick lists and confirm bins.",

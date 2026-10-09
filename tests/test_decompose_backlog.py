@@ -189,3 +189,49 @@ def test_source_origin_title_must_match_excerpt() -> None:
         decompose_backlog(_envelope(), provider, repair=False)
 
     assert any("title_origin=source" in error for error in exc.value.errors)
+
+
+def test_exact_source_title_keeps_source_origin() -> None:
+    payload = load_fixture()
+    proposal = representative_complete_proposal()
+    feature = next(item for item in proposal["items"] if item["local_id"] == "feat-portal")
+    assert feature["title"] == payload["solution"]["key_capabilities"][0]
+    assert feature["title_origin"] == "source"
+
+    backlog, findings = decompose_backlog(_envelope(), MockProvider(proposal), repair=False)
+    stored = next(item for item in backlog.items if item.title == feature["title"])
+    title_generated = [
+        item
+        for item in findings.items
+        if item.code is FindingCode.GENERATED_CONTENT
+        and stored.canonical_id in item.canonical_ids
+        and "title" in item.message
+    ]
+    assert title_generated == []
+
+
+def test_grounded_paraphrase_title_is_generated_not_source() -> None:
+    payload = load_fixture()
+    proposal = representative_complete_proposal()
+    epic = next(item for item in proposal["items"] if item["local_id"] == "epic-1")
+    epic["title"] = "customer self-service portal"
+    epic["title_origin"] = "source"
+    epic["provenance"] = [
+        {
+            "json_path": "$.user_request",
+            "field_name": "user_request",
+            "excerpt": payload["user_request"],
+        }
+    ]
+    assert epic["title"] != payload["user_request"]
+    assert epic["title"] in payload["user_request"]
+
+    backlog, findings = decompose_backlog(_envelope(), MockProvider(proposal), repair=False)
+    stored = next(item for item in backlog.items if item.type is WorkItemType.EPIC)
+    assert stored.title == "customer self-service portal"
+    assert any(
+        item.code is FindingCode.GENERATED_CONTENT
+        and stored.canonical_id in item.canonical_ids
+        and "title" in item.message
+        for item in findings.items
+    )

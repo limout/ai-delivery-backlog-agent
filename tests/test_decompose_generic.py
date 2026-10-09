@@ -341,7 +341,7 @@ def test_warehouse_project_rejects_uncovered_requirement() -> None:
 
 def test_warehouse_atomic_and_multi_task_stories_with_generated_provenance() -> None:
     envelope = CopilotWorkflowResponseV1.model_validate(warehouse_picking_envelope())
-    backlog, findings = decompose_backlog(envelope, MockProvider(_warehouse_proposal()))
+    backlog, findings = decompose_backlog(envelope, MockProvider(_warehouse_proposal()), repair=False)
 
     stories = [item for item in backlog.items if item.type is WorkItemType.USER_STORY]
     next_pick = next(item for item in stories if "next pick" in item.title.lower())

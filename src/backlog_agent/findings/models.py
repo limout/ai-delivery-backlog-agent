@@ -30,6 +30,13 @@ class FindingCode(str, Enum):
     UNCOVERED_NON_FUNCTIONAL_REQUIREMENT = "UNCOVERED_NON_FUNCTIONAL_REQUIREMENT"
     PLANNING_CONSTRAINT = "PLANNING_CONSTRAINT"
     ATOMIC_STORY = "ATOMIC_STORY"
+    OVERSIZED_STORY = "OVERSIZED_STORY"
+    BROAD_TASK = "BROAD_TASK"
+    MISSING_IMPLEMENTATION_DETAIL = "MISSING_IMPLEMENTATION_DETAIL"
+    MISSING_VERIFICATION_COVERAGE = "MISSING_VERIFICATION_COVERAGE"
+    OVER_DECOMPOSITION = "OVER_DECOMPOSITION"
+    OVERLAPPING_STORY_RESPONSIBILITY = "OVERLAPPING_STORY_RESPONSIBILITY"
+    DUPLICATE_ACCEPTANCE_CRITERION = "DUPLICATE_ACCEPTANCE_CRITERION"
 
 
 class Finding(BaseModel):
@@ -40,6 +47,7 @@ class Finding(BaseModel):
     message: str
     source_references: list[SourceReference] = Field(default_factory=list)
     canonical_ids: list[str] = Field(default_factory=list)
+    local_ids: list[str] = Field(default_factory=list)
 
 
 class GenerationFindings(BaseModel):
