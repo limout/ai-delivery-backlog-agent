@@ -67,7 +67,10 @@ def representative_complete_proposal() -> dict[str, Any]:
                 "local_id": "story-renew",
                 "type": "user_story",
                 "title": fr[0],
-                "description": "",
+                "description": (
+                    "An authenticated customer reviews eligibility, premium, and coverage "
+                    "for a motor or home policy before confirming a renewal online."
+                ),
                 "parent_local_id": "feat-renewal",
                 "depends_on_local_ids": [],
                 "acceptance_criteria": [ac[0]],
@@ -87,7 +90,10 @@ def representative_complete_proposal() -> dict[str, Any]:
                 "local_id": "story-confirm",
                 "type": "user_story",
                 "title": fr[1],
-                "description": "",
+                "description": (
+                    "After a renewal is accepted, the customer receives confirmation so they "
+                    "do not need to call the contact centre for proof of processing."
+                ),
                 "parent_local_id": "feat-portal",
                 "depends_on_local_ids": ["story-renew"],
                 "acceptance_criteria": [],
@@ -103,7 +109,10 @@ def representative_complete_proposal() -> dict[str, Any]:
                 "local_id": "story-premium",
                 "type": "user_story",
                 "title": fr[2],
-                "description": "",
+                "description": (
+                    "Before the customer confirms, the portal shows the proposed premium and "
+                    "coverage so they can abort if the terms are unacceptable."
+                ),
                 "parent_local_id": "feat-renewal",
                 "depends_on_local_ids": [],
                 "acceptance_criteria": [],
@@ -158,6 +167,7 @@ def representative_complete_proposal() -> dict[str, Any]:
                 "uncertainties": [],
             },
         ],
+        "prerequisites": [],
         "uncertainties": [
             "Delivery workstreams are scheduling constructs, not product features."
         ],
@@ -186,3 +196,50 @@ def proposal_with_out_of_scope_feature() -> dict[str, Any]:
         },
     )
     return data
+
+
+def execution_ready_proposal() -> dict[str, Any]:
+    """Stories with useful text, multiple tasks, generated AC, and no workstream Features."""
+
+    data = representative_complete_proposal()
+    payload = load_fixture()
+    ac = payload["requirements"]["acceptance_criteria"][0]
+    story = next(item for item in data["items"] if item["local_id"] == "story-renew")
+    story["acceptance_criteria"] = [
+        ac,
+        "Ineligible policies show a next-step explanation instead of a confirm action.",
+    ]
+    story["acceptance_criteria_origins"] = ["source", "generated"]
+    story["test_requirements"] = [
+        "Automated test: eligible policy shows confirm; ineligible policy hides confirm and shows the explanation."
+    ]
+    story["test_requirements_origins"] = ["generated"]
+    data["items"].insert(
+        -1,
+        {
+            "local_id": "task-eligibility-ui",
+            "type": "task",
+            "title": "Build eligibility gate on the renewal review screen",
+            "description": "Show confirm only when the policy administration response marks the policy eligible.",
+            "parent_local_id": "story-renew",
+            "depends_on_local_ids": [],
+            "acceptance_criteria": [],
+            "test_requirements": [],
+            "provenance": [_src("$.sow.in_scope[0]", "in_scope", payload["sow"]["in_scope"][0])],
+            "title_origin": "generated",
+            "description_origin": "generated",
+            "uncertainties": [],
+        },
+    )
+    data["prerequisites"] = [
+        {
+            "text": (
+                "Policy administration API documentation and sandbox availability are not confirmed; "
+                "integration tasks remain blocked until access is verified."
+            ),
+            "status": "unresolved",
+            "provenance": [_src("$.user_request", "user_request", payload["user_request"])],
+        }
+    ]
+    return data
+

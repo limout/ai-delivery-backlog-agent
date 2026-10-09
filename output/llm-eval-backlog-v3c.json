@@ -1,0 +1,753 @@
+{
+  "backlog": {
+    "contract_id": "canonical.backlog.v1",
+    "backlog_id": "cbl_49edb95f-9d9c-5b74-a481-32ab2b602441",
+    "items": [
+      {
+        "canonical_id": "cbl_f431da22-004a-5c26-8b66-bd334d98247f",
+        "title": "Insurance Policy Renewal Portal MVP",
+        "description": "An epic covering the development of a customer self-service web portal that allows eligible customers to review and renew existing insurance policies online.",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": null,
+        "child_ids": [
+          "cbl_498547b1-ee4e-56b4-a962-cf7e9dcdf3cd",
+          "cbl_29b949f9-04c8-598c-ac2e-78c86fb53836",
+          "cbl_bd778d87-853c-5cb7-b52e-be4ab375f2d4",
+          "cbl_9e71ac20-d1b5-52a6-b917-4bda4ad0bbbf",
+          "cbl_c249d66a-f41e-5884-9499-ec9ffd1123b6"
+        ],
+        "acceptance_criteria": [],
+        "test_requirements": [],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.user_request",
+            "field_name": null,
+            "excerpt": "# Delivery Request: Insurance Policy Renewal Portal MVP\n\n## 1. Business Context\n\nWe are a mid-sized insurance company offering personal motor and home insurance. Currently, customers renew policies by contacting our call center or sending emails to their insurance agent. This creates unnecessary manual work, delays, and a poor customer experience.\n\nWe want to build a customer self-service web portal that allows eligible customers to review and renew their existing insurance policies online.\n\nThe goal is to launch a secure MVP that reduces manual renewal processing and makes the renewal journey faster and more transparent.\n\n## 2. Business Objectives\n\n- Allow eligible customers to complete a policy renewal without contacting the call center.\n- Reduce manual work for customer service employees.\n- Clearly display policy details, premium, and coverage before the customer confirms a renewal.\n- Provide customers with confirmation that their renewal request has been completed.\n- Establish a foundation for adding more insurance products in the future.\n\n## 3. Target Users\n\n**Existing insurance customers**\n- Need to access their policies securely.\n- Want to review renewal terms and complete a renewal online.\n- Need confirmation and access to their updated policy information.\n\n**Customer service employees**\n- Need to help customers who cannot complete a renewal online.\n- Need visibility into renewal requests and their processing status.\n\n**Operations team**\n- Needs a reliable process for handling renewal requests and exceptions.\n\n## 4. Functional Scope\n\n### Customer access\n- Customers can sign in securely.\n- Customers can view their existing policies and identify which policies are eligible for renewal.\n- Customers can view policy details, current coverage, premium, and renewal terms.\n\n### Renewal journey\n- Customers can start a renewal for an eligible policy.\n- The system validates eligibility before allowing the customer to proceed.\n- Customers can review the proposed premium and coverage before confirming.\n- Customers must explicitly confirm the renewal before the request is submitted.\n- The system prevents duplicate submissions for the same policy renewal.\n- If a policy is not eligible, the customer receives a clear explanation and instructions on what to do next.\n\n### Confirmation and policy information\n- Customers receive an on-screen confirmation after a successful renewal.\n- A confirmation email is sent after the renewal is successfully processed.\n- Customers can view the updated policy information and renewal status.\n\n### Operational visibility\n- Customer service employees can search for a customer or policy and view its renewal status.\n- Employees can identify renewals that failed or require manual intervention.\n- Failed renewal attempts must not be presented to customers as successful renewals.\n\n## 5. Existing Systems and Integrations\n\nThe company already has:\n- A policy administration system that is the source of truth for policies, eligibility, premiums, and coverage.\n- An identity provider supporting customer authentication.\n- An email delivery service.\n- An internal customer service application.\n\nThe policy administration system exposes APIs for retrieving policy information and submitting renewal requests, but its documentation and sandbox availability have not yet been confirmed.\n\nThe customer service application does not currently provide a dedicated renewal management workflow.\n\nDo not assume that any undocumented API, data field, or integration capability is available.\n\n## 6. Non-Functional Requirements\n\n- Protect customer and policy information from unauthorized access.\n- Enforce authorization so customers can access only their own policies.\n- Encrypt sensitive information in transit.\n- Maintain an audit trail of renewal submissions and their outcomes.\n- Handle timeouts and temporary integration failures without creating duplicate renewals.\n- Provide clear error messages and recovery guidance.\n- Design the portal to support future expansion to additional insurance products.\n\nSpecific performance targets, availability commitments, retention periods, and regulatory requirements still need confirmation.\n\n## 7. MVP Boundaries\n\n**In scope**\n- Responsive web portal for existing customers.\n- Secure customer access.\n- Policy listing and renewal eligibility.\n- Policy and renewal-term review.\n- Renewal confirmation and submission.\n- Customer confirmation email.\n- Basic customer service visibility into renewal status.\n- Error handling and auditability for renewal processing.\n\n**Out of scope**\n- New insurance policy purchases.\n- Claims submission or claims adjudication.\n- Automated underwriting or risk scoring.\n- Mobile native applications.\n- Replacing the existing policy administration system.\n- Rebuilding the company's identity provider.\n- Advanced analytics and personalized insurance recommendations.\n\n## 8. Delivery Constraints and Assumptions\n\n- This is an MVP, not a complete insurance platform.\n- The existing policy administration system remains the source of truth.\n- The project team and technical architecture have not yet been finalized.\n- Integration feasibility must be verified before committing to delivery dates.\n- The customer experience should prioritize a straightforward, accessible renewal journey.\n- Security, authorization, and prevention of duplicate renewals are critical requirements.\n\nThe business would like to launch within approximately 12 weeks, but this is a target rather than an approved commitment. The delivery team must assess feasibility after clarifying integration readiness, scope, and implementation risks.\n\n## 9. Requested Delivery Assessment\n\nPlease produce a complete delivery assessment covering:\n- Clarification questions and material unknowns.\n- Functional and non-functional requirements.\n- Proposed solution and integration approach.\n- Delivery phases, workstreams, milestones, and dependencies.\n- Estimated effort and timeline with explicit assumptions and confidence.\n- Major delivery risks and mitigations.\n- MVP scope, exclusions, and acceptance approach.\n- A proposal and statement of work consistent with the available evidence.\n\nDo not invent confirmed API capabilities, regulatory obligations, staffing commitments, or delivery guarantees. Clearly distinguish known facts, assumptions, unresolved questions, and recommendations."
+          }
+        ],
+        "effort": null,
+        "type": "epic"
+      },
+      {
+        "canonical_id": "cbl_498547b1-ee4e-56b4-a962-cf7e9dcdf3cd",
+        "title": "Customer authentication via the existing identity provider",
+        "description": "Provides secure authentication for customers accessing the insurance renewal portal.",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": "cbl_f431da22-004a-5c26-8b66-bd334d98247f",
+        "child_ids": [
+          "cbl_6b187aa8-92e7-55bb-a887-7411eba87a9f"
+        ],
+        "acceptance_criteria": [],
+        "test_requirements": [],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.solution.key_capabilities[0]",
+            "field_name": null,
+            "excerpt": "Customer authentication via the existing identity provider"
+          }
+        ],
+        "effort": null,
+        "type": "feature"
+      },
+      {
+        "canonical_id": "cbl_29b949f9-04c8-598c-ac2e-78c86fb53836",
+        "title": "Online review of existing personal motor and home insurance policies",
+        "description": "Enables customers to inspect their current policy terms, coverage, and premiums online.",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": "cbl_f431da22-004a-5c26-8b66-bd334d98247f",
+        "child_ids": [
+          "cbl_681ce6c4-a492-596b-83e2-00a7f494dea0"
+        ],
+        "acceptance_criteria": [],
+        "test_requirements": [],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.solution.key_capabilities[1]",
+            "field_name": null,
+            "excerpt": "Online review of existing personal motor and home insurance policies"
+          }
+        ],
+        "effort": null,
+        "type": "feature"
+      },
+      {
+        "canonical_id": "cbl_bd778d87-853c-5cb7-b52e-be4ab375f2d4",
+        "title": "Online submission of policy renewal requests",
+        "description": "Allows eligible customers to submit their policy renewal applications digitally.",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": "cbl_f431da22-004a-5c26-8b66-bd334d98247f",
+        "child_ids": [
+          "cbl_751302de-4ec6-5363-8b94-bbd13df1192c"
+        ],
+        "acceptance_criteria": [],
+        "test_requirements": [],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.solution.key_capabilities[2]",
+            "field_name": null,
+            "excerpt": "Online submission of policy renewal requests"
+          }
+        ],
+        "effort": null,
+        "type": "feature"
+      },
+      {
+        "canonical_id": "cbl_9e71ac20-d1b5-52a6-b917-4bda4ad0bbbf",
+        "title": "Triggering of confirmation emails via the existing email delivery service",
+        "description": "Sends transactional notification emails to customers following a successful renewal.",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": "cbl_f431da22-004a-5c26-8b66-bd334d98247f",
+        "child_ids": [
+          "cbl_02f9c13a-6318-5cc4-a12e-2f123ca1be51"
+        ],
+        "acceptance_criteria": [],
+        "test_requirements": [],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.solution.key_capabilities[3]",
+            "field_name": null,
+            "excerpt": "Triggering of confirmation emails via the existing email delivery service"
+          }
+        ],
+        "effort": null,
+        "type": "feature"
+      },
+      {
+        "canonical_id": "cbl_c249d66a-f41e-5884-9499-ec9ffd1123b6",
+        "title": "Integration with the existing policy administration system acting as the source of truth",
+        "description": "Connects the portal backend to the policy administration system for data reads and writes.",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": "cbl_f431da22-004a-5c26-8b66-bd334d98247f",
+        "child_ids": [
+          "cbl_18dfa0fe-41a9-5f15-8aea-142d6f569d47"
+        ],
+        "acceptance_criteria": [],
+        "test_requirements": [],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.solution.key_capabilities[4]",
+            "field_name": null,
+            "excerpt": "Integration with the existing policy administration system acting as the source of truth"
+          }
+        ],
+        "effort": null,
+        "type": "feature"
+      },
+      {
+        "canonical_id": "cbl_6b187aa8-92e7-55bb-a887-7411eba87a9f",
+        "title": "Customer Authentication",
+        "description": "As an existing customer, I want to sign in securely using the identity provider so that I can access my private policy information.",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": "cbl_498547b1-ee4e-56b4-a962-cf7e9dcdf3cd",
+        "child_ids": [
+          "cbl_0489c8b3-827a-5164-9c88-78481df1d6ec"
+        ],
+        "acceptance_criteria": [
+          "An eligible customer can successfully log into the web portal using the existing identity provider."
+        ],
+        "test_requirements": [
+          "Verify OAuth/OIDC token exchange with the identity provider mock.",
+          "Assert unauthorized requests are rejected."
+        ],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.functional_requirements[3]",
+            "field_name": null,
+            "excerpt": "The system shall authenticate customers using the existing identity provider."
+          },
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.acceptance_criteria[0]",
+            "field_name": null,
+            "excerpt": "An eligible customer can successfully log into the web portal using the existing identity provider."
+          }
+        ],
+        "effort": null,
+        "type": "user_story"
+      },
+      {
+        "canonical_id": "cbl_681ce6c4-a492-596b-83e2-00a7f494dea0",
+        "title": "Review Existing Policies",
+        "description": "As an eligible customer, I want to view my motor and home insurance policies online to check their eligibility and renewal terms.",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": "cbl_29b949f9-04c8-598c-ac2e-78c86fb53836",
+        "child_ids": [
+          "cbl_c97d9b04-c90b-5ea1-a385-a599261c3bc1"
+        ],
+        "acceptance_criteria": [
+          "An eligible customer can view their existing personal motor and home insurance policy details within the web portal."
+        ],
+        "test_requirements": [
+          "Test policy list rendering for various coverage types.",
+          "Assert correct data mapping from policy administration system payload."
+        ],
+        "dependencies": [
+          "cbl_6b187aa8-92e7-55bb-a887-7411eba87a9f"
+        ],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.functional_requirements[0]",
+            "field_name": null,
+            "excerpt": "The system shall allow eligible customers to review existing personal motor and home insurance policies online via a secure web portal."
+          },
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.acceptance_criteria[1]",
+            "field_name": null,
+            "excerpt": "An eligible customer can view their existing personal motor and home insurance policy details within the web portal."
+          }
+        ],
+        "effort": null,
+        "type": "user_story"
+      },
+      {
+        "canonical_id": "cbl_751302de-4ec6-5363-8b94-bbd13df1192c",
+        "title": "Submit Policy Renewal",
+        "description": "As an eligible customer, I want to submit a renewal request online so that I can extend my coverage without calling support.",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": "cbl_bd778d87-853c-5cb7-b52e-be4ab375f2d4",
+        "child_ids": [],
+        "acceptance_criteria": [
+          "An eligible customer can submit a policy renewal request through the web portal and trigger a confirmation email via the email delivery service."
+        ],
+        "test_requirements": [
+          "Simulate successful submission response and verify on-screen success message.",
+          "Test duplicate submission prevention logic."
+        ],
+        "dependencies": [
+          "cbl_681ce6c4-a492-596b-83e2-00a7f494dea0"
+        ],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.functional_requirements[1]",
+            "field_name": null,
+            "excerpt": "The system shall allow eligible customers to submit renewal requests for existing insurance policies online."
+          },
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.acceptance_criteria[2]",
+            "field_name": null,
+            "excerpt": "An eligible customer can submit a policy renewal request through the web portal and trigger a confirmation email via the email delivery service."
+          }
+        ],
+        "effort": null,
+        "type": "user_story"
+      },
+      {
+        "canonical_id": "cbl_02f9c13a-6318-5cc4-a12e-2f123ca1be51",
+        "title": "Receive Confirmation Email",
+        "description": "As a customer, I want to receive an email confirmation after renewing so that I have a durable record of my updated policy.",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": "cbl_9e71ac20-d1b5-52a6-b917-4bda4ad0bbbf",
+        "child_ids": [
+          "cbl_8df52560-4620-56c1-8dd0-c59f95afb6c1"
+        ],
+        "acceptance_criteria": [],
+        "test_requirements": [
+          "Verify email delivery service stub receives correct recipient and policy payload.",
+          "Check template variable substitution."
+        ],
+        "dependencies": [
+          "cbl_751302de-4ec6-5363-8b94-bbd13df1192c"
+        ],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.functional_requirements[4]",
+            "field_name": null,
+            "excerpt": "The system shall utilize the existing email delivery service to send confirmation emails."
+          }
+        ],
+        "effort": null,
+        "type": "user_story"
+      },
+      {
+        "canonical_id": "cbl_18dfa0fe-41a9-5f15-8aea-142d6f569d47",
+        "title": "Policy Administration System Data Exchange",
+        "description": "As a system operator, I need the portal to communicate with the policy administration system reliably to retrieve records and post renewals.",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": "cbl_c249d66a-f41e-5884-9499-ec9ffd1123b6",
+        "child_ids": [
+          "cbl_e3448faf-4fa7-5baa-b496-eece439c6d30"
+        ],
+        "acceptance_criteria": [],
+        "test_requirements": [
+          "Perform contract testing against API stubs.",
+          "Verify error handling for timeout and connection drops."
+        ],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.functional_requirements[2]",
+            "field_name": null,
+            "excerpt": "The system shall retrieve policy information from and submit renewal requests to the existing policy administration system."
+          }
+        ],
+        "effort": null,
+        "type": "user_story"
+      },
+      {
+        "canonical_id": "cbl_0489c8b3-827a-5164-9c88-78481df1d6ec",
+        "title": "Integrate Identity Provider Authentication",
+        "description": "Implement authentication flow using the existing identity provider.",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": "cbl_6b187aa8-92e7-55bb-a887-7411eba87a9f",
+        "child_ids": [],
+        "acceptance_criteria": [],
+        "test_requirements": [
+          "Unit test callback handlers and session token generation."
+        ],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.sow.deliverables[1]",
+            "field_name": null,
+            "excerpt": "Customer authentication integration using the existing identity provider"
+          }
+        ],
+        "effort": null,
+        "type": "task"
+      },
+      {
+        "canonical_id": "cbl_c97d9b04-c90b-5ea1-a385-a599261c3bc1",
+        "title": "Develop Responsive Web Portal UI",
+        "description": "Build responsive web pages for policy review and account management.",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": "cbl_681ce6c4-a492-596b-83e2-00a7f494dea0",
+        "child_ids": [],
+        "acceptance_criteria": [],
+        "test_requirements": [
+          "Verify responsive layout across target viewports."
+        ],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.sow.deliverables[0]",
+            "field_name": null,
+            "excerpt": "Secure MVP web portal for online policy review and renewal"
+          }
+        ],
+        "effort": null,
+        "type": "task"
+      },
+      {
+        "canonical_id": "cbl_e3448faf-4fa7-5baa-b496-eece439c6d30",
+        "title": "Implement Policy Administration System API Client",
+        "description": "Develop client services to query policy details and submit renewals.",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": "cbl_18dfa0fe-41a9-5f15-8aea-142d6f569d47",
+        "child_ids": [],
+        "acceptance_criteria": [],
+        "test_requirements": [
+          "Mock external API responses for integration tests."
+        ],
+        "dependencies": [],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.sow.deliverables[2]",
+            "field_name": null,
+            "excerpt": "API integration with the existing policy administration system as the source of truth"
+          }
+        ],
+        "effort": null,
+        "type": "task"
+      },
+      {
+        "canonical_id": "cbl_8df52560-4620-56c1-8dd0-c59f95afb6c1",
+        "title": "Integrate Email Delivery Service",
+        "description": "Configure service integration to dispatch confirmation emails on successful submission.",
+        "status": "todo",
+        "approval_state": "not_approved",
+        "priority": null,
+        "parent_id": "cbl_02f9c13a-6318-5cc4-a12e-2f123ca1be51",
+        "child_ids": [],
+        "acceptance_criteria": [],
+        "test_requirements": [
+          "Verify outbound payload formatting."
+        ],
+        "dependencies": [
+          "cbl_751302de-4ec6-5363-8b94-bbd13df1192c"
+        ],
+        "provenance": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.sow.deliverables[3]",
+            "field_name": null,
+            "excerpt": "Automated confirmation email triggers utilizing the existing email delivery service"
+          }
+        ],
+        "effort": null,
+        "type": "task"
+      }
+    ],
+    "source_contract_id": "copilot.workflow_response.v1",
+    "source_provenance": [
+      {
+        "contract_id": "copilot.workflow_response.v1",
+        "json_path": "$.user_request",
+        "field_name": "user_request",
+        "excerpt": "# Delivery Request: Insurance Policy Renewal Portal MVP\n\n## 1. Business Context\n\nWe are a mid-sized insurance company offering personal motor and home insurance. Currently, customers renew policies by contacting our call center or sending emails to their insurance agent. This creates unnecessary manual work, delays, and a poor customer experience.\n\nWe want to build a customer self-service web portal that allows eligible customers to review and renew their existing insurance policies online.\n\nThe goal is to launch a secure MVP that reduces manual renewal processing and makes the renewal journey faster and more transparent.\n\n## 2. Business Objectives\n\n- Allow eligible customers to complete a policy renewal without contacting the call center.\n- Reduce manual work for customer service employees.\n- Clearly display policy details, premium, and coverage before the customer confirms a renewal.\n- Provide customers with confirmation that their renewal request has been completed.\n- Establish a foundation for adding more insurance products in the future.\n\n## 3. Target Users\n\n**Existing insurance customers**\n- Need to access their policies securely.\n- Want to review renewal terms and complete a renewal online.\n- Need confirmation and access to their updated policy information.\n\n**Customer service employees**\n- Need to help customers who cannot complete a renewal online.\n- Need visibility into renewal requests and their processing status.\n\n**Operations team**\n- Needs a reliable process for handling renewal requests and exceptions.\n\n## 4. Functional Scope\n\n### Customer access\n- Customers can sign in securely.\n- Customers can view their existing policies and identify which policies are eligible for renewal.\n- Customers can view policy details, current coverage, premium, and renewal terms.\n\n### Renewal journey\n- Customers can start a renewal for an eligible policy.\n- The system validates eligibility before allowing the customer to proceed.\n- Customers can review the proposed premium and coverage before confirming.\n- Customers must explicitly confirm the renewal before the request is submitted.\n- The system prevents duplicate submissions for the same policy renewal.\n- If a policy is not eligible, the customer receives a clear explanation and instructions on what to do next.\n\n### Confirmation and policy information\n- Customers receive an on-screen confirmation after a successful renewal.\n- A confirmation email is sent after the renewal is successfully processed.\n- Customers can view the updated policy information and renewal status.\n\n### Operational visibility\n- Customer service employees can search for a customer or policy and view its renewal status.\n- Employees can identify renewals that failed or require manual intervention.\n- Failed renewal attempts must not be presented to customers as successful renewals.\n\n## 5. Existing Systems and Integrations\n\nThe company already has:\n- A policy administration system that is the source of truth for policies, eligibility, premiums, and coverage.\n- An identity provider supporting customer authentication.\n- An email delivery service.\n- An internal customer service application.\n\nThe policy administration system exposes APIs for retrieving policy information and submitting renewal requests, but its documentation and sandbox availability have not yet been confirmed.\n\nThe customer service application does not currently provide a dedicated renewal management workflow.\n\nDo not assume that any undocumented API, data field, or integration capability is available.\n\n## 6. Non-Functional Requirements\n\n- Protect customer and policy information from unauthorized access.\n- Enforce authorization so customers can access only their own policies.\n- Encrypt sensitive information in transit.\n- Maintain an audit trail of renewal submissions and their outcomes.\n- Handle timeouts and temporary integration failures without creating duplicate renewals.\n- Provide clear error messages and recovery guidance.\n- Design the portal to support future expansion to additional insurance products.\n\nSpecific performance targets, availability commitments, retention periods, and regulatory requirements still need confirmation.\n\n## 7. MVP Boundaries\n\n**In scope**\n- Responsive web portal for existing customers.\n- Secure customer access.\n- Policy listing and renewal eligibility.\n- Policy and renewal-term review.\n- Renewal confirmation and submission.\n- Customer confirmation email.\n- Basic customer service visibility into renewal status.\n- Error handling and auditability for renewal processing.\n\n**Out of scope**\n- New insurance policy purchases.\n- Claims submission or claims adjudication.\n- Automated underwriting or risk scoring.\n- Mobile native applications.\n- Replacing the existing policy administration system.\n- Rebuilding the company's identity provider.\n- Advanced analytics and personalized insurance recommendations.\n\n## 8. Delivery Constraints and Assumptions\n\n- This is an MVP, not a complete insurance platform.\n- The existing policy administration system remains the source of truth.\n- The project team and technical architecture have not yet been finalized.\n- Integration feasibility must be verified before committing to delivery dates.\n- The customer experience should prioritize a straightforward, accessible renewal journey.\n- Security, authorization, and prevention of duplicate renewals are critical requirements.\n\nThe business would like to launch within approximately 12 weeks, but this is a target rather than an approved commitment. The delivery team must assess feasibility after clarifying integration readiness, scope, and implementation risks.\n\n## 9. Requested Delivery Assessment\n\nPlease produce a complete delivery assessment covering:\n- Clarification questions and material unknowns.\n- Functional and non-functional requirements.\n- Proposed solution and integration approach.\n- Delivery phases, workstreams, milestones, and dependencies.\n- Estimated effort and timeline with explicit assumptions and confidence.\n- Major delivery risks and mitigations.\n- MVP scope, exclusions, and acceptance approach.\n- A proposal and statement of work consistent with the available evidence.\n\nDo not invent confirmed API capabilities, regulatory obligations, staffing commitments, or delivery guarantees. Clearly distinguish known facts, assumptions, unresolved questions, and recommendations."
+      }
+    ]
+  },
+  "findings": {
+    "contract_id": "canonical.generation_findings.v1",
+    "items": [
+      {
+        "severity": "info",
+        "code": "GENERATED_CONTENT",
+        "message": "Item contains AI-generated or inferred text: title, description.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.user_request",
+            "field_name": null,
+            "excerpt": "# Delivery Request: Insurance Policy Renewal Portal MVP\n\n## 1. Business Context\n\nWe are a mid-sized insurance company offering personal motor and home insurance. Currently, customers renew policies by contacting our call center or sending emails to their insurance agent. This creates unnecessary manual work, delays, and a poor customer experience.\n\nWe want to build a customer self-service web portal that allows eligible customers to review and renew their existing insurance policies online.\n\nThe goal is to launch a secure MVP that reduces manual renewal processing and makes the renewal journey faster and more transparent.\n\n## 2. Business Objectives\n\n- Allow eligible customers to complete a policy renewal without contacting the call center.\n- Reduce manual work for customer service employees.\n- Clearly display policy details, premium, and coverage before the customer confirms a renewal.\n- Provide customers with confirmation that their renewal request has been completed.\n- Establish a foundation for adding more insurance products in the future.\n\n## 3. Target Users\n\n**Existing insurance customers**\n- Need to access their policies securely.\n- Want to review renewal terms and complete a renewal online.\n- Need confirmation and access to their updated policy information.\n\n**Customer service employees**\n- Need to help customers who cannot complete a renewal online.\n- Need visibility into renewal requests and their processing status.\n\n**Operations team**\n- Needs a reliable process for handling renewal requests and exceptions.\n\n## 4. Functional Scope\n\n### Customer access\n- Customers can sign in securely.\n- Customers can view their existing policies and identify which policies are eligible for renewal.\n- Customers can view policy details, current coverage, premium, and renewal terms.\n\n### Renewal journey\n- Customers can start a renewal for an eligible policy.\n- The system validates eligibility before allowing the customer to proceed.\n- Customers can review the proposed premium and coverage before confirming.\n- Customers must explicitly confirm the renewal before the request is submitted.\n- The system prevents duplicate submissions for the same policy renewal.\n- If a policy is not eligible, the customer receives a clear explanation and instructions on what to do next.\n\n### Confirmation and policy information\n- Customers receive an on-screen confirmation after a successful renewal.\n- A confirmation email is sent after the renewal is successfully processed.\n- Customers can view the updated policy information and renewal status.\n\n### Operational visibility\n- Customer service employees can search for a customer or policy and view its renewal status.\n- Employees can identify renewals that failed or require manual intervention.\n- Failed renewal attempts must not be presented to customers as successful renewals.\n\n## 5. Existing Systems and Integrations\n\nThe company already has:\n- A policy administration system that is the source of truth for policies, eligibility, premiums, and coverage.\n- An identity provider supporting customer authentication.\n- An email delivery service.\n- An internal customer service application.\n\nThe policy administration system exposes APIs for retrieving policy information and submitting renewal requests, but its documentation and sandbox availability have not yet been confirmed.\n\nThe customer service application does not currently provide a dedicated renewal management workflow.\n\nDo not assume that any undocumented API, data field, or integration capability is available.\n\n## 6. Non-Functional Requirements\n\n- Protect customer and policy information from unauthorized access.\n- Enforce authorization so customers can access only their own policies.\n- Encrypt sensitive information in transit.\n- Maintain an audit trail of renewal submissions and their outcomes.\n- Handle timeouts and temporary integration failures without creating duplicate renewals.\n- Provide clear error messages and recovery guidance.\n- Design the portal to support future expansion to additional insurance products.\n\nSpecific performance targets, availability commitments, retention periods, and regulatory requirements still need confirmation.\n\n## 7. MVP Boundaries\n\n**In scope**\n- Responsive web portal for existing customers.\n- Secure customer access.\n- Policy listing and renewal eligibility.\n- Policy and renewal-term review.\n- Renewal confirmation and submission.\n- Customer confirmation email.\n- Basic customer service visibility into renewal status.\n- Error handling and auditability for renewal processing.\n\n**Out of scope**\n- New insurance policy purchases.\n- Claims submission or claims adjudication.\n- Automated underwriting or risk scoring.\n- Mobile native applications.\n- Replacing the existing policy administration system.\n- Rebuilding the company's identity provider.\n- Advanced analytics and personalized insurance recommendations.\n\n## 8. Delivery Constraints and Assumptions\n\n- This is an MVP, not a complete insurance platform.\n- The existing policy administration system remains the source of truth.\n- The project team and technical architecture have not yet been finalized.\n- Integration feasibility must be verified before committing to delivery dates.\n- The customer experience should prioritize a straightforward, accessible renewal journey.\n- Security, authorization, and prevention of duplicate renewals are critical requirements.\n\nThe business would like to launch within approximately 12 weeks, but this is a target rather than an approved commitment. The delivery team must assess feasibility after clarifying integration readiness, scope, and implementation risks.\n\n## 9. Requested Delivery Assessment\n\nPlease produce a complete delivery assessment covering:\n- Clarification questions and material unknowns.\n- Functional and non-functional requirements.\n- Proposed solution and integration approach.\n- Delivery phases, workstreams, milestones, and dependencies.\n- Estimated effort and timeline with explicit assumptions and confidence.\n- Major delivery risks and mitigations.\n- MVP scope, exclusions, and acceptance approach.\n- A proposal and statement of work consistent with the available evidence.\n\nDo not invent confirmed API capabilities, regulatory obligations, staffing commitments, or delivery guarantees. Clearly distinguish known facts, assumptions, unresolved questions, and recommendations."
+          }
+        ],
+        "canonical_ids": [
+          "cbl_f431da22-004a-5c26-8b66-bd334d98247f"
+        ]
+      },
+      {
+        "severity": "info",
+        "code": "GENERATED_CONTENT",
+        "message": "Item contains AI-generated or inferred text: description.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.solution.key_capabilities[0]",
+            "field_name": null,
+            "excerpt": "Customer authentication via the existing identity provider"
+          }
+        ],
+        "canonical_ids": [
+          "cbl_498547b1-ee4e-56b4-a962-cf7e9dcdf3cd"
+        ]
+      },
+      {
+        "severity": "info",
+        "code": "GENERATED_CONTENT",
+        "message": "Item contains AI-generated or inferred text: description.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.solution.key_capabilities[1]",
+            "field_name": null,
+            "excerpt": "Online review of existing personal motor and home insurance policies"
+          }
+        ],
+        "canonical_ids": [
+          "cbl_29b949f9-04c8-598c-ac2e-78c86fb53836"
+        ]
+      },
+      {
+        "severity": "info",
+        "code": "GENERATED_CONTENT",
+        "message": "Item contains AI-generated or inferred text: description.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.solution.key_capabilities[2]",
+            "field_name": null,
+            "excerpt": "Online submission of policy renewal requests"
+          }
+        ],
+        "canonical_ids": [
+          "cbl_bd778d87-853c-5cb7-b52e-be4ab375f2d4"
+        ]
+      },
+      {
+        "severity": "info",
+        "code": "GENERATED_CONTENT",
+        "message": "Item contains AI-generated or inferred text: description.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.solution.key_capabilities[3]",
+            "field_name": null,
+            "excerpt": "Triggering of confirmation emails via the existing email delivery service"
+          }
+        ],
+        "canonical_ids": [
+          "cbl_9e71ac20-d1b5-52a6-b917-4bda4ad0bbbf"
+        ]
+      },
+      {
+        "severity": "info",
+        "code": "GENERATED_CONTENT",
+        "message": "Item contains AI-generated or inferred text: description.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.solution.key_capabilities[4]",
+            "field_name": null,
+            "excerpt": "Integration with the existing policy administration system acting as the source of truth"
+          }
+        ],
+        "canonical_ids": [
+          "cbl_c249d66a-f41e-5884-9499-ec9ffd1123b6"
+        ]
+      },
+      {
+        "severity": "info",
+        "code": "GENERATED_CONTENT",
+        "message": "Item contains AI-generated or inferred text: title, description, test_requirements.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.functional_requirements[3]",
+            "field_name": null,
+            "excerpt": "The system shall authenticate customers using the existing identity provider."
+          },
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.acceptance_criteria[0]",
+            "field_name": null,
+            "excerpt": "An eligible customer can successfully log into the web portal using the existing identity provider."
+          }
+        ],
+        "canonical_ids": [
+          "cbl_6b187aa8-92e7-55bb-a887-7411eba87a9f"
+        ]
+      },
+      {
+        "severity": "info",
+        "code": "GENERATED_CONTENT",
+        "message": "Item contains AI-generated or inferred text: title, description, test_requirements.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.functional_requirements[0]",
+            "field_name": null,
+            "excerpt": "The system shall allow eligible customers to review existing personal motor and home insurance policies online via a secure web portal."
+          },
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.acceptance_criteria[1]",
+            "field_name": null,
+            "excerpt": "An eligible customer can view their existing personal motor and home insurance policy details within the web portal."
+          }
+        ],
+        "canonical_ids": [
+          "cbl_681ce6c4-a492-596b-83e2-00a7f494dea0"
+        ]
+      },
+      {
+        "severity": "info",
+        "code": "GENERATED_CONTENT",
+        "message": "Item contains AI-generated or inferred text: title, description, test_requirements.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.functional_requirements[1]",
+            "field_name": null,
+            "excerpt": "The system shall allow eligible customers to submit renewal requests for existing insurance policies online."
+          },
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.acceptance_criteria[2]",
+            "field_name": null,
+            "excerpt": "An eligible customer can submit a policy renewal request through the web portal and trigger a confirmation email via the email delivery service."
+          }
+        ],
+        "canonical_ids": [
+          "cbl_751302de-4ec6-5363-8b94-bbd13df1192c"
+        ]
+      },
+      {
+        "severity": "info",
+        "code": "GENERATED_CONTENT",
+        "message": "Item contains AI-generated or inferred text: title, description, test_requirements.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.functional_requirements[4]",
+            "field_name": null,
+            "excerpt": "The system shall utilize the existing email delivery service to send confirmation emails."
+          }
+        ],
+        "canonical_ids": [
+          "cbl_02f9c13a-6318-5cc4-a12e-2f123ca1be51"
+        ]
+      },
+      {
+        "severity": "info",
+        "code": "GENERATED_CONTENT",
+        "message": "Item contains AI-generated or inferred text: title, description, test_requirements.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.functional_requirements[2]",
+            "field_name": null,
+            "excerpt": "The system shall retrieve policy information from and submit renewal requests to the existing policy administration system."
+          }
+        ],
+        "canonical_ids": [
+          "cbl_18dfa0fe-41a9-5f15-8aea-142d6f569d47"
+        ]
+      },
+      {
+        "severity": "info",
+        "code": "GENERATED_CONTENT",
+        "message": "Item contains AI-generated or inferred text: title, description, test_requirements.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.sow.deliverables[1]",
+            "field_name": null,
+            "excerpt": "Customer authentication integration using the existing identity provider"
+          }
+        ],
+        "canonical_ids": [
+          "cbl_0489c8b3-827a-5164-9c88-78481df1d6ec"
+        ]
+      },
+      {
+        "severity": "info",
+        "code": "GENERATED_CONTENT",
+        "message": "Item contains AI-generated or inferred text: title, description, test_requirements.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.sow.deliverables[0]",
+            "field_name": null,
+            "excerpt": "Secure MVP web portal for online policy review and renewal"
+          }
+        ],
+        "canonical_ids": [
+          "cbl_c97d9b04-c90b-5ea1-a385-a599261c3bc1"
+        ]
+      },
+      {
+        "severity": "info",
+        "code": "GENERATED_CONTENT",
+        "message": "Item contains AI-generated or inferred text: title, description, test_requirements.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.sow.deliverables[2]",
+            "field_name": null,
+            "excerpt": "API integration with the existing policy administration system as the source of truth"
+          }
+        ],
+        "canonical_ids": [
+          "cbl_e3448faf-4fa7-5baa-b496-eece439c6d30"
+        ]
+      },
+      {
+        "severity": "info",
+        "code": "GENERATED_CONTENT",
+        "message": "Item contains AI-generated or inferred text: title, description, test_requirements.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.sow.deliverables[3]",
+            "field_name": null,
+            "excerpt": "Automated confirmation email triggers utilizing the existing email delivery service"
+          }
+        ],
+        "canonical_ids": [
+          "cbl_8df52560-4620-56c1-8dd0-c59f95afb6c1"
+        ]
+      },
+      {
+        "severity": "warning",
+        "code": "AMBIGUOUS_DECOMPOSITION",
+        "message": "Integration feasibility with the policy administration system and API documentation have not yet been verified.",
+        "source_references": [],
+        "canonical_ids": []
+      },
+      {
+        "severity": "warning",
+        "code": "UNRESOLVED_PREREQUISITE",
+        "message": "The policy administration system API documentation and sandbox environment must be accessible for team review.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.open_questions[0]",
+            "field_name": null,
+            "excerpt": "Are the policy administration system API documentation and sandbox environment now accessible for team review?"
+          }
+        ],
+        "canonical_ids": []
+      },
+      {
+        "severity": "warning",
+        "code": "UNRESOLVED_PREREQUISITE",
+        "message": "Specific regulatory compliance standards applying to the renewal portal must be confirmed.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.open_questions[1]",
+            "field_name": null,
+            "excerpt": "What specific regulatory compliance standards apply to the renewal portal?"
+          }
+        ],
+        "canonical_ids": []
+      },
+      {
+        "severity": "warning",
+        "code": "UNCOVERED_NON_FUNCTIONAL_REQUIREMENT",
+        "message": "Non-functional requirement is not traced on any backlog item.",
+        "source_references": [
+          {
+            "contract_id": "copilot.workflow_response.v1",
+            "json_path": "$.requirements.non_functional_requirements[1]",
+            "field_name": "non_functional_requirements",
+            "excerpt": "The existing policy administration system must remain the source of truth."
+          }
+        ],
+        "canonical_ids": []
+      }
+    ]
+  }
+}

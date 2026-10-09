@@ -1,0 +1,22 @@
+{
+  "backlog": null,
+  "findings": {
+    "contract_id": "canonical.generation_findings.v1",
+    "items": [
+      {
+        "severity": "error",
+        "code": "LLM_VALIDATION_FAILED",
+        "message": "LLM backlog proposal failed independent validation after at most one repair.",
+        "source_references": [],
+        "canonical_ids": []
+      }
+    ]
+  },
+  "validation_errors": [
+    "items.6: Value error, test_requirements_origins length must match test_requirements",
+    "items.7: Value error, test_requirements_origins length must match test_requirements",
+    "items.8: Value error, test_requirements_origins length must match test_requirements",
+    "items.9: Value error, test_requirements_origins length must match test_requirements",
+    "items.10: Value error, test_requirements_origins length must match test_requirements"
+  ]
+}

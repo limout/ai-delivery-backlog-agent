@@ -1,0 +1,48 @@
+{
+  "ok": true,
+  "live_gemini": true,
+  "overwrote_baseline": false,
+  "overwrote_v2": false,
+  "input": "C:\\Repo\\LimoutAI\\limout-ai-delivery-backlog-agent\\input\\copilot-complete.json",
+  "output": "C:\\Repo\\LimoutAI\\limout-ai-delivery-backlog-agent\\output\\llm-eval-backlog-v3c.json",
+  "provider": "gemini",
+  "model": "gemini-3.5-flash-lite",
+  "timeout_seconds": "180",
+  "envelope_status": "COMPLETE",
+  "envelope_workflow_status": "COMPLETE",
+  "elapsed_ms": 17910,
+  "item_count": 15,
+  "type_counts": {
+    "epic": 1,
+    "feature": 5,
+    "user_story": 5,
+    "task": 4
+  },
+  "finding_count": 19,
+  "finding_codes": {
+    "GENERATED_CONTENT": 15,
+    "AMBIGUOUS_DECOMPOSITION": 1,
+    "UNRESOLVED_PREREQUISITE": 2,
+    "UNCOVERED_NON_FUNCTIONAL_REQUIREMENT": 1
+  },
+  "uncovered_functional_requirements": [],
+  "stories_with_ac": 3,
+  "stories_without_ac": 2,
+  "stories_with_tests": 5,
+  "task_count": 4,
+  "subtask_count": 0,
+  "items_with_dependencies": 4,
+  "unresolved_prerequisites": [
+    "The policy administration system API documentation and sandbox environment must be accessible for team review.",
+    "Specific regulatory compliance standards applying to the renewal portal must be confirmed."
+  ],
+  "usage": {
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "duration_ms": 8286,
+    "input_tokens": 7369,
+    "output_tokens": 3986,
+    "total_tokens": 11355
+  },
+  "application_validation": "passed"
+}

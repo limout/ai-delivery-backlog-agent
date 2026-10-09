@@ -12,14 +12,12 @@ from backlog_agent.backlog.generate import (
     _FindingSink,
     _IdAllocator,
     _backlog_id,
-    _classify_scope,
     _record_requirement_negations,
     _record_sow_list_conflicts,
-    _record_uncovered_requirements,
     _source_ref,
     resolve_json_path,
 )
-from backlog_agent.backlog.ids import item_identity_key
+from backlog_agent.backlog.ids import item_identity_key, normalize_source_text
 from backlog_agent.backlog.models import (
     ApprovalState,
     CanonicalBacklogV1,
@@ -32,11 +30,15 @@ from backlog_agent.backlog.proposal import (
     ProposedItem,
     proposal_json_schema,
 )
-from backlog_agent.contracts.copilot_workflow_response_v1 import CopilotWorkflowResponseV1
-from backlog_agent.contracts.versions import COPILOT_WORKFLOW_RESPONSE_V1
 from backlog_agent.findings.models import Finding, FindingCode, FindingSeverity, GenerationFindings
 from backlog_agent.llm.exceptions import DecompositionValidationError
 from backlog_agent.llm.provider import AIProvider
+from backlog_agent.source import load_project_source
+from backlog_agent.source.model import (
+    NormalizedProjectSource,
+    classify_scope,
+    fact_texts,
+)
 
 _PARENT_TYPE: dict[WorkItemType, WorkItemType | None] = {
     WorkItemType.EPIC: None,
@@ -46,18 +48,30 @@ _PARENT_TYPE: dict[WorkItemType, WorkItemType | None] = {
     WorkItemType.SUBTASK: WorkItemType.TASK,
 }
 
-_ALLOWED_PATH_PREFIXES = (
-    "$.user_request",
-    "$.executive_summary",
-    "$.requirements",
-    "$.solution",
-    "$.delivery_plan",
-    "$.sow",
+_GENERIC_TASK_TITLES = frozenset(
+    {
+        "implementation",
+        "implement",
+        "development",
+        "testing",
+        "qa",
+        "backend",
+        "frontend",
+        "misc",
+        "other",
+        "todo",
+        "tbd",
+        "placeholder",
+        "work",
+        "task",
+        "subtask",
+        "do work",
+        "implement feature",
+    }
 )
 
-
 def decompose_backlog(
-    envelope: CopilotWorkflowResponseV1 | Mapping[str, Any],
+    envelope: Mapping[str, Any] | object,
     provider: AIProvider,
     *,
     repair: bool = True,
@@ -69,16 +83,11 @@ def decompose_backlog(
     checks remain deterministic.
     """
 
-    parsed = (
-        envelope
-        if isinstance(envelope, CopilotWorkflowResponseV1)
-        else CopilotWorkflowResponseV1.model_validate(envelope)
-    )
-    original = parsed.original_envelope
+    source = load_project_source(envelope)
     schema = proposal_json_schema()
-    prompt = _build_prompt(original)
+    prompt = _build_prompt(source)
     raw = provider.generate_json(prompt, schema)
-    result = _try_materialize(original, raw)
+    result = _try_materialize(source, raw)
 
     if result.ok:
         return result.backlog, GenerationFindings(items=result.findings.items)
@@ -86,7 +95,7 @@ def decompose_backlog(
     if repair:
         repair_prompt = _build_repair_prompt(prompt, raw, result.errors)
         repaired = provider.generate_json(repair_prompt, schema)
-        second = _try_materialize(original, repaired)
+        second = _try_materialize(source, repaired)
         if second.ok:
             return second.backlog, GenerationFindings(items=second.findings.items)
         result = second
@@ -117,8 +126,9 @@ class _MaterializeResult:
         self.backlog = backlog
 
 
-def _try_materialize(original: Mapping[str, Any], raw: Mapping[str, Any]) -> _MaterializeResult:
+def _try_materialize(source: NormalizedProjectSource, raw: Mapping[str, Any]) -> _MaterializeResult:
     findings = _FindingSink()
+    original = source.original
     _record_sow_list_conflicts(original, findings)
     _record_requirement_negations(original, findings)
     errors: list[str] = []
@@ -132,17 +142,18 @@ def _try_materialize(original: Mapping[str, Any], raw: Mapping[str, Any]) -> _Ma
         return _MaterializeResult(ok=False, errors=errors or ["proposal is not a valid object"], findings=findings)
 
     errors.extend(_structural_errors(proposal))
-    errors.extend(_provenance_and_scope_errors(original, proposal, findings))
+    errors.extend(_provenance_and_scope_errors(source, proposal, findings))
+    errors.extend(_execution_quality_errors(source, proposal))
     if errors:
         return _MaterializeResult(ok=False, errors=errors, findings=findings)
 
     try:
-        backlog = _to_canonical(original, proposal, findings)
+        backlog = _to_canonical(source, proposal, findings)
     except (ValidationError, ValueError) as exc:
         errors.append(str(exc))
         return _MaterializeResult(ok=False, errors=errors, findings=findings)
 
-    _record_uncovered_requirements(original, backlog.items, findings)
+    _record_uncovered_functional_requirements(source, backlog.items, findings)
     uncovered = [
         item for item in findings.items if item.code is FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT
     ]
@@ -154,8 +165,11 @@ def _try_materialize(original: Mapping[str, Any], raw: Mapping[str, Any]) -> _Ma
             )
         return _MaterializeResult(ok=False, errors=errors, findings=findings)
 
-    _record_generated_content(proposal, backlog, findings)
+    _record_generated_content(source, proposal, backlog, findings)
     _record_uncertainties(proposal, backlog, findings)
+    _record_prerequisites(proposal, findings)
+    _record_requirement_coverage_findings(source, backlog.items, findings)
+    _record_atomic_stories(backlog, findings)
     return _MaterializeResult(ok=True, errors=[], findings=findings, backlog=backlog)
 
 
@@ -223,60 +237,34 @@ def _cycle_errors(items: list[ProposedItem], *, parent: bool) -> list[str]:
     return found
 
 
-def _path_allowed(json_path: str) -> bool:
-    for prefix in _ALLOWED_PATH_PREFIXES:
+def _path_allowed(source: NormalizedProjectSource, json_path: str) -> bool:
+    for prefix in source.allowed_path_prefixes:
         if json_path == prefix or json_path.startswith(prefix + ".") or json_path.startswith(prefix + "["):
             return True
     return False
 
 
 def _provenance_and_scope_errors(
-    original: Mapping[str, Any],
+    source: NormalizedProjectSource,
     proposal: BacklogProposal,
     findings: _FindingSink,
 ) -> list[str]:
     errors: list[str] = []
+    original = source.original
     for item in proposal.items:
-        for index, ref in enumerate(item.provenance):
-            label = f"{item.local_id}.provenance[{index}]"
-            if not _path_allowed(ref.json_path):
-                errors.append(f"{label}: json_path {ref.json_path!r} is not an allowed Copilot field")
-                continue
-            resolved = resolve_json_path(original, ref.json_path)
-            if resolved is None:
-                errors.append(f"{label}: json_path {ref.json_path!r} does not resolve in the envelope")
-                findings.add(
-                    Finding(
-                        severity=FindingSeverity.ERROR,
-                        code=FindingCode.UNGROUNDED_PROVENANCE,
-                        message=f"Provenance path {ref.json_path!r} does not exist on the Copilot envelope.",
-                        source_references=[_source_ref(ref.json_path, ref.field_name, ref.excerpt)],
-                    )
-                )
-                continue
-            if ref.excerpt is not None:
-                if isinstance(resolved, str):
-                    if ref.excerpt != resolved:
-                        errors.append(
-                            f"{label}: excerpt does not equal the source value at {ref.json_path}"
-                        )
-                        findings.add(
-                            Finding(
-                                severity=FindingSeverity.ERROR,
-                                code=FindingCode.UNGROUNDED_PROVENANCE,
-                                message="Provenance excerpt does not match the Copilot field value.",
-                                source_references=[
-                                    _source_ref(ref.json_path, ref.field_name, excerpt=ref.excerpt)
-                                ],
-                            )
-                        )
-                elif not isinstance(resolved, str):
-                    errors.append(f"{label}: excerpt was provided but {ref.json_path} is not a string")
+        errors.extend(
+            _provenance_ref_errors(
+                source,
+                item.provenance,
+                item.local_id,
+                findings,
+            )
+        )
 
-        classification = _classify_scope(original, item.title)
+        classification = classify_scope(source, item.title)
         if classification == "out":
             errors.append(
-                f"{item.local_id}: title matches sow.out_of_scope and must not appear in the backlog"
+                f"{item.local_id}: title matches an out_of_scope statement and must not appear in the backlog"
             )
             findings.add(
                 Finding(
@@ -298,11 +286,23 @@ def _provenance_and_scope_errors(
                 errors.append(
                     f"{item.local_id}: title_origin=source but title is not equal to any provenance excerpt"
                 )
+
+        errors.extend(_origin_value_errors(source, item))
+
+    for index, prerequisite in enumerate(proposal.prerequisites):
+        errors.extend(
+            _provenance_ref_errors(
+                source,
+                prerequisite.provenance,
+                f"prerequisites[{index}]",
+                findings,
+            )
+        )
     return errors
 
 
 def _to_canonical(
-    original: Mapping[str, Any],
+    source: NormalizedProjectSource,
     proposal: BacklogProposal,
     findings: _FindingSink,
 ) -> CanonicalBacklogV1:
@@ -359,14 +359,14 @@ def _to_canonical(
         )
 
     return CanonicalBacklogV1(
-        backlog_id=_backlog_id(original),
+        backlog_id=_backlog_id(source.original),
         items=models,
-        source_contract_id=COPILOT_WORKFLOW_RESPONSE_V1,
+        source_contract_id=source.contract_id,
         source_provenance=[
             _source_ref(
-                "$.user_request",
-                "user_request",
-                excerpt=original.get("user_request") if isinstance(original.get("user_request"), str) else None,
+                source.request.json_path,
+                source.request.field_name,
+                excerpt=source.request.text or None,
             )
         ],
     )
@@ -377,20 +377,202 @@ def _base_path(json_path: str) -> str:
     return json_path[:bracket] if bracket >= 0 else json_path
 
 
+def _provenance_ref_errors(
+    source: NormalizedProjectSource,
+    refs: list[Any],
+    owner: str,
+    findings: _FindingSink,
+) -> list[str]:
+    errors: list[str] = []
+    original = source.original
+    for index, ref in enumerate(refs):
+        label = f"{owner}.provenance[{index}]"
+        if not _path_allowed(source, ref.json_path):
+            errors.append(f"{label}: json_path {ref.json_path!r} is not an allowed source field")
+            continue
+        resolved = resolve_json_path(original, ref.json_path)
+        if resolved is None:
+            errors.append(f"{label}: json_path {ref.json_path!r} does not resolve in the envelope")
+            findings.add(
+                Finding(
+                    severity=FindingSeverity.ERROR,
+                    code=FindingCode.UNGROUNDED_PROVENANCE,
+                    message=f"Provenance path {ref.json_path!r} does not exist on the Copilot envelope.",
+                    source_references=[_source_ref(ref.json_path, ref.field_name, ref.excerpt)],
+                )
+            )
+            continue
+        if not isinstance(resolved, str):
+            if ref.excerpt is not None:
+                errors.append(f"{label}: excerpt was provided but {ref.json_path} is not a string")
+            continue
+        if ref.excerpt is None:
+            if "[" in ref.json_path:
+                errors.append(
+                    f"{label}: array provenance requires an excerpt equal to the source element"
+                )
+            else:
+                ref.excerpt = resolved
+            continue
+        if ref.excerpt != resolved:
+            # Unique scalar fields are identified by path. Array elements still
+            # require an exact excerpt so the wrong index cannot be papered over.
+            if "[" not in ref.json_path:
+                ref.excerpt = resolved
+                continue
+            errors.append(f"{label}: excerpt does not equal the source value at {ref.json_path}")
+            findings.add(
+                Finding(
+                    severity=FindingSeverity.ERROR,
+                    code=FindingCode.UNGROUNDED_PROVENANCE,
+                    message="Provenance excerpt does not match the Copilot field value.",
+                    source_references=[_source_ref(ref.json_path, ref.field_name, excerpt=ref.excerpt)],
+                )
+            )
+    return errors
+
+
+def _origin_value_errors(source: NormalizedProjectSource, item: ProposedItem) -> list[str]:
+    errors: list[str] = []
+    source_acs = fact_texts(source.acceptance_criteria)
+    for index, criterion in enumerate(item.acceptance_criteria):
+        origin = _list_origin(item.acceptance_criteria_origins, index, criterion, source_acs)
+        if origin is ContentOrigin.SOURCE and normalize_source_text(criterion) not in source_acs:
+            errors.append(
+                f"{item.local_id}.acceptance_criteria[{index}]: origin=source but text is not a Copilot acceptance criterion"
+            )
+    source_tests: set[str] = set()
+    for index, requirement in enumerate(item.test_requirements):
+        origin = _list_origin(item.test_requirements_origins, index, requirement, source_tests)
+        if origin is ContentOrigin.SOURCE:
+            errors.append(
+                f"{item.local_id}.test_requirements[{index}]: test requirements are verification activities and cannot use origin=source unless Copilot listed them"
+            )
+        if normalize_source_text(requirement) in source_acs:
+            errors.append(
+                f"{item.local_id}.test_requirements[{index}]: test requirement restates an acceptance criterion; keep verification distinct"
+            )
+    return errors
+
+
+def _list_origin(
+    origins: list[ContentOrigin],
+    index: int,
+    text: str,
+    source_values: set[str],
+) -> ContentOrigin:
+    if origins:
+        return origins[index]
+    if normalize_source_text(text) in source_values:
+        return ContentOrigin.SOURCE
+    return ContentOrigin.GENERATED
+
+
+def _execution_quality_errors(source: NormalizedProjectSource, proposal: BacklogProposal) -> list[str]:
+    errors: list[str] = []
+    workstreams = fact_texts(source.workstreams)
+    blocking = fact_texts(source.blocking_dependencies)
+    timeline_texts = fact_texts(
+        tuple(fact for fact in source.non_functional_requirements if fact.is_timeline_or_estimate)
+    )
+    seen_task_titles: dict[str, str] = {}
+
+    for item in proposal.items:
+        if item.type is WorkItemType.USER_STORY:
+            if not item.description.strip():
+                errors.append(f"{item.local_id}: user stories must include a useful description")
+            elif _is_title_restatement(item.title, item.description):
+                errors.append(
+                    f"{item.local_id}: description restates the title; describe actor, behaviour, and outcome"
+                )
+
+        if item.type is WorkItemType.FEATURE and normalize_source_text(item.title) in workstreams:
+            errors.append(
+                f"{item.local_id}: delivery workstreams must not be copied as features"
+            )
+
+        normalized_title = normalize_source_text(item.title)
+        if any(
+            normalized_title == constraint or constraint in normalized_title
+            for constraint in timeline_texts
+            if len(constraint) >= 12
+        ):
+            errors.append(
+                f"{item.local_id}: do not convert a timeline or estimate constraint into a committed backlog item"
+            )
+
+        if item.type in {WorkItemType.TASK, WorkItemType.SUBTASK}:
+            normalized = normalize_source_text(item.title)
+            if normalized in _GENERIC_TASK_TITLES or len(normalized) < 12:
+                errors.append(f"{item.local_id}: generic or filler task title {item.title!r}")
+            if normalized in workstreams:
+                errors.append(
+                    f"{item.local_id}: delivery workstreams must not be copied as tasks"
+                )
+            if normalized in blocking:
+                errors.append(
+                    f"{item.local_id}: source blocking dependency must be an unresolved prerequisite, not an implementation task"
+                )
+            owner = seen_task_titles.get(normalized)
+            if owner is not None:
+                errors.append(
+                    f"{item.local_id}: duplicate task title of {owner}; combine or specialize the work"
+                )
+            else:
+                seen_task_titles[normalized] = item.local_id
+
+    return errors
+
+
+def _is_title_restatement(title: str, description: str) -> bool:
+    normalized_title = normalize_source_text(title)
+    normalized_description = normalize_source_text(description)
+    if not normalized_description or not normalized_title:
+        return False
+    if normalized_description == normalized_title:
+        return True
+    prefixes = (
+        "user story ",
+        "user story to ",
+        "user story allowing ",
+        "feature ",
+        "feature for ",
+        "feature allowing ",
+        "feature ensuring ",
+        "task ",
+        "story ",
+    )
+    for prefix in prefixes:
+        remainder = normalized_description[len(prefix) :] if normalized_description.startswith(prefix) else ""
+        if remainder and (remainder == normalized_title or normalized_title in remainder):
+            return True
+    return False
+
+
 def _record_generated_content(
+    source: NormalizedProjectSource,
     proposal: BacklogProposal,
     backlog: CanonicalBacklogV1,
     findings: _FindingSink,
 ) -> None:
+    source_acs = fact_texts(source.acceptance_criteria)
     by_local = {item.local_id: item for item in proposal.items}
     local_ids = list(by_local)
     for index, canonical in enumerate(backlog.items):
         proposed = by_local[local_ids[index]]
-        origins = []
+        origins: list[str] = []
         if proposed.title_origin is ContentOrigin.GENERATED:
             origins.append("title")
         if proposed.description and proposed.description_origin is ContentOrigin.GENERATED:
             origins.append("description")
+        generated_ac = [
+            criterion
+            for ac_index, criterion in enumerate(proposed.acceptance_criteria)
+            if _list_origin(proposed.acceptance_criteria_origins, ac_index, criterion, source_acs)
+            is ContentOrigin.GENERATED
+        ]
+        if generated_ac:
+            origins.append("acceptance_criteria")
         if proposed.test_requirements:
             origins.append("test_requirements")
         if not origins:
@@ -402,6 +584,121 @@ def _record_generated_content(
                 message="Item contains AI-generated or inferred text: " + ", ".join(origins) + ".",
                 canonical_ids=[canonical.canonical_id],
                 source_references=list(canonical.provenance),
+            )
+        )
+
+
+def _record_prerequisites(proposal: BacklogProposal, findings: _FindingSink) -> None:
+    for prerequisite in proposal.prerequisites:
+        findings.add(
+            Finding(
+                severity=FindingSeverity.WARNING,
+                code=FindingCode.UNRESOLVED_PREREQUISITE,
+                message=prerequisite.text,
+                source_references=[
+                    _source_ref(ref.json_path, ref.field_name, excerpt=ref.excerpt)
+                    for ref in prerequisite.provenance
+                ],
+            )
+        )
+
+
+def _provenance_covers_fact(
+    items: list[Any],
+    fact,
+    *,
+    types: set[WorkItemType] | None = None,
+) -> bool:
+    for item in items:
+        if types is not None and item.type not in types:
+            continue
+        for reference in item.provenance:
+            if reference.json_path == fact.json_path and reference.excerpt == fact.text:
+                return True
+    return False
+
+
+def _record_uncovered_functional_requirements(
+    source: NormalizedProjectSource,
+    items: list[Any],
+    findings: _FindingSink,
+) -> None:
+    for fact in source.functional_requirements:
+        if classify_scope(source, fact.text) in {"out", "conflict"}:
+            continue
+        if _provenance_covers_fact(items, fact, types={WorkItemType.USER_STORY}):
+            continue
+        findings.add(
+            Finding(
+                severity=FindingSeverity.ERROR,
+                code=FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT,
+                message="Functional requirement has no traceable canonical user story provenance.",
+                source_references=[
+                    _source_ref(fact.json_path, fact.field_name, excerpt=fact.text)
+                ],
+            )
+        )
+
+
+def _record_requirement_coverage_findings(
+    source: NormalizedProjectSource,
+    items: list[Any],
+    findings: _FindingSink,
+) -> None:
+    for fact in source.non_functional_requirements:
+        if fact.is_timeline_or_estimate:
+            findings.add(
+                Finding(
+                    severity=FindingSeverity.INFO,
+                    code=FindingCode.PLANNING_CONSTRAINT,
+                    message="Timeline or estimate constraint is not a committed backlog item.",
+                    source_references=[
+                        _source_ref(fact.json_path, fact.field_name, excerpt=fact.text)
+                    ],
+                )
+            )
+            continue
+        if classify_scope(source, fact.text) in {"out", "conflict"}:
+            continue
+        if _provenance_covers_fact(items, fact):
+            continue
+        findings.add(
+            Finding(
+                severity=FindingSeverity.WARNING,
+                code=FindingCode.UNCOVERED_NON_FUNCTIONAL_REQUIREMENT,
+                message=(
+                    "Non-functional requirement is not traced on any backlog item. "
+                    "A related Feature or Story without this source path does not count as coverage."
+                ),
+                source_references=[
+                    _source_ref(fact.json_path, fact.field_name, excerpt=fact.text)
+                ],
+            )
+        )
+
+
+def _record_atomic_stories(backlog: CanonicalBacklogV1, findings: _FindingSink) -> None:
+    by_id = {item.canonical_id: item for item in backlog.items}
+    for item in backlog.items:
+        if item.type is not WorkItemType.USER_STORY:
+            continue
+        task_children = [
+            child_id
+            for child_id in item.child_ids
+            if by_id.get(child_id) is not None and by_id[child_id].type is WorkItemType.TASK
+        ]
+        if task_children:
+            continue
+        findings.add(
+            Finding(
+                severity=FindingSeverity.INFO,
+                code=FindingCode.ATOMIC_STORY,
+                message=(
+                    "User story has no child tasks; treated as an atomic implementable slice "
+                    "rather than incomplete decomposition."
+                ),
+                canonical_ids=[item.canonical_id],
+                source_references=list(item.provenance),
             )
         )
 
@@ -437,38 +734,46 @@ def _record_uncertainties(
             )
 
 
-def _build_prompt(original: Mapping[str, Any]) -> str:
-    compact = {
-        "user_request": original.get("user_request"),
-        "executive_summary": original.get("executive_summary"),
-        "requirements": original.get("requirements"),
-        "solution": original.get("solution"),
-        "delivery_plan": original.get("delivery_plan"),
-        "sow": original.get("sow"),
-    }
+def _build_prompt(source: NormalizedProjectSource) -> str:
     return (
-        "You decompose a completed Copilot workflow_response into a tracker-independent "
-        "software backlog. Return JSON only, matching the supplied schema.\n\n"
-        "Rules:\n"
-        "- Propose one concise project Epic title. Do not use the entire Markdown user_request as the title.\n"
-        "- Features are product capabilities (solution.key_capabilities that are in scope), "
-        "not delivery workstreams. Do not copy every workstream into a Feature.\n"
-        "- Every in-scope functional requirement must be covered by at least one user_story "
-        "whose provenance json_path points at that requirement and whose excerpt equals it.\n"
-        "- Attach acceptance_criteria and test_requirements to stories when the source supports it. "
-        "If Copilot does not bind criteria to a requirement, put them on the most relevant story "
-        "and list the ambiguity in uncertainties. Do not invent customer commitments.\n"
-        "- Honour sow.in_scope and sow.out_of_scope. Do not create items for out-of-scope text.\n"
-        "- Delivery phases, workstreams, milestones, and deliverables may become tasks or subtasks "
-        "or dependencies. Use meaningful parent-child links (epic→feature→user_story→task→subtask).\n"
+        "You decompose normalized project facts into a tracker-independent software backlog. "
+        "Return JSON only, matching the supplied schema. Do not assume a particular industry.\n\n"
+        "Product tree:\n"
+        "- One concise Epic title. Do not paste the entire request as the title.\n"
+        "- Features are in-scope product capabilities. Do not copy delivery workstreams into Features.\n"
+        "- Every in-scope functional requirement needs at least one user_story whose provenance "
+        "json_path points at that requirement and whose excerpt equals the source text.\n"
+        "- Story descriptions must explain actor, behaviour, and outcome. Do not restate the title.\n"
+        "- Bind source acceptance criteria onto the story they most clearly verify and mark "
+        "acceptance_criteria_origins as source. Additional story-specific criteria may be proposed "
+        "with origin generated. If binding is uncertain, say so in uncertainties.\n"
+        "- Acceptance criteria are observable outcomes. test_requirements are verification activities "
+        "(tests to run, data to assert, integrations to stub). They must not copy acceptance criteria. "
+        "Mark test_requirements generated.\n"
+        "- Add Tasks only when they are concrete, independently trackable implementation, integration, "
+        "testing, or operational work. Do not force a Task under every Story. If the Story is already "
+        "an atomic implementable slice, leave it without child tasks. If implementation work is needed "
+        "but unknown, record an uncertainty instead of inventing filler.\n"
+        "- Treat listed deliverables as inspiration for necessary work, not a 1:1 task dump.\n"
+        "- Subtasks only when they add tracking value as independently completable slices. Do not copy "
+        "every milestone or phase as a Subtask.\n"
+        "- depends_on_local_ids only for a defensible blocking relationship (for example a confirmation "
+        "step that cannot run until a submit step succeeds). Do not add dependencies to fill the tree.\n"
+        "- Put unverified blocking conditions (external access, unfinalized staffing, unconfirmed "
+        "standards) in prerequisites with status unresolved. Do not create a task that claims those "
+        "conditions are already met.\n"
+        "- Honour in-scope and out-of-scope statements. Never create items for excluded work.\n"
+        "- Do not invent effort, architecture decisions, or external approvals. Do not convert a "
+        "timeline or estimate constraint into a committed milestone, date, or work item.\n"
+        "- Trace a non-functional requirement only by putting its exact source path and excerpt on an "
+        "item that implements or verifies that constraint. A related Feature or Story without that "
+        "path does not count as coverage. Timeline and estimate statements are planning constraints.\n"
+        "- title_origin=source only when title equals a provenance excerpt. Provenance excerpts must "
+        "equal the source field. Preserve remaining uncertainty in uncertainties.\n"
         "- local_id values are your own stable keys (not tracker keys, not cbl_ ids).\n"
-        "- title_origin=source only when title equals a provenance excerpt copied from Copilot. "
-        "Otherwise title_origin=generated.\n"
-        "- Provenance excerpts must equal the Copilot field at json_path. Do not paraphrase excerpts.\n"
-        "- Preserve uncertainty in uncertainties. Do not silently resolve material ambiguity.\n"
-        "- Do not invent effort, estimates, or customer commitments that are not in the source.\n\n"
-        "Copilot envelope (relevant sections):\n"
-        f"{json.dumps(compact, ensure_ascii=False, indent=2)}\n"
+        "- Hierarchy is epic→feature→user_story→task→subtask.\n\n"
+        "Normalized project facts:\n"
+        f"{json.dumps(source.prompt_facts, ensure_ascii=False, indent=2)}\n"
     )
 
 
@@ -481,7 +786,7 @@ def _build_repair_prompt(
     return (
         f"{original_prompt}\n\n"
         "The previous JSON failed deterministic validation. Return a corrected JSON object "
-        "for the same Copilot envelope. Do not mark the output as valid yourself.\n"
+        "for the same project facts. Do not mark the output as valid yourself.\n"
         f"Validation errors:\n{listed}\n\n"
         "Previous JSON:\n"
         f"{json.dumps(previous, ensure_ascii=False)}\n"

@@ -1,0 +1,19 @@
+{
+  "ok": false,
+  "live_gemini": true,
+  "overwrote_baseline": false,
+  "overwrote_v2": false,
+  "input": "C:\\Repo\\LimoutAI\\limout-ai-delivery-backlog-agent\\input\\copilot-complete.json",
+  "output": "C:\\Repo\\LimoutAI\\limout-ai-delivery-backlog-agent\\output\\llm-eval-backlog-v3.json",
+  "provider": "gemini",
+  "model": "gemini-3.5-flash-lite",
+  "timeout_seconds": "180",
+  "envelope_status": "COMPLETE",
+  "envelope_workflow_status": "COMPLETE",
+  "elapsed_ms": 18627,
+  "application_validation": "failed",
+  "blocker": "LLM proposal failed independent validation after at most one repair.",
+  "validation_errors": [
+    "epic_renewal_portal.provenance[0]: excerpt does not equal the source value at $.user_request"
+  ]
+}

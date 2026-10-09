@@ -1,0 +1,23 @@
+{
+  "ok": false,
+  "live_gemini": true,
+  "overwrote_baseline": false,
+  "overwrote_v2": false,
+  "input": "C:\\Repo\\LimoutAI\\limout-ai-delivery-backlog-agent\\input\\copilot-complete.json",
+  "output": "C:\\Repo\\LimoutAI\\limout-ai-delivery-backlog-agent\\output\\llm-eval-backlog-v3b.json",
+  "provider": "gemini",
+  "model": "gemini-3.5-flash-lite",
+  "timeout_seconds": "180",
+  "envelope_status": "COMPLETE",
+  "envelope_workflow_status": "COMPLETE",
+  "elapsed_ms": 17849,
+  "application_validation": "failed",
+  "blocker": "LLM proposal failed independent validation after at most one repair.",
+  "validation_errors": [
+    "items.6: Value error, test_requirements_origins length must match test_requirements",
+    "items.7: Value error, test_requirements_origins length must match test_requirements",
+    "items.8: Value error, test_requirements_origins length must match test_requirements",
+    "items.9: Value error, test_requirements_origins length must match test_requirements",
+    "items.10: Value error, test_requirements_origins length must match test_requirements"
+  ]
+}

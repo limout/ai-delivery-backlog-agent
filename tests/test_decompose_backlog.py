@@ -56,7 +56,7 @@ def test_decompose_complete_fixture_with_mock_provider() -> None:
     assert any(item.code is FindingCode.GENERATED_CONTENT for item in findings.items)
     assert any(item.code is FindingCode.AMBIGUOUS_DECOMPOSITION for item in findings.items)
     assert provider.calls
-    assert "Do not copy every workstream" in provider.calls[0][0]
+    assert "Do not copy delivery workstreams" in provider.calls[0][0]
 
 
 def test_decompose_rejects_out_of_scope_item() -> None:
@@ -70,7 +70,7 @@ def test_decompose_rejects_out_of_scope_item() -> None:
 
 def test_decompose_rejects_ungrounded_provenance() -> None:
     proposal = representative_complete_proposal()
-    proposal["items"][0]["provenance"][0]["excerpt"] = "not in the envelope"
+    proposal["items"][1]["provenance"][0]["excerpt"] = "not in the envelope"
     provider = MockProvider(proposal)
 
     with pytest.raises(DecompositionValidationError) as exc:
