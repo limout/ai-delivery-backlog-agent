@@ -140,7 +140,13 @@ def decompose_backlog(
         quality = _actionable_quality_findings(result.findings)
         if repair and quality:
             snapshot = _fr_coverage_snapshot(result.proposal)
-            quality_prompt = _build_quality_repair_prompt(prompt, raw, quality, snapshot)
+            quality_prompt = _build_quality_repair_prompt(
+                prompt,
+                raw,
+                quality,
+                snapshot,
+                _uncovered_narrative_outcomes(source, result.findings),
+            )
             _repaired, second = _invoke_provider(
                 provider, quality_prompt, schema, source, calls, "quality_repair"
             )
@@ -1348,6 +1354,42 @@ def _invoke_provider(
     return raw, result
 
 
+def _uncovered_narrative_outcomes(
+    source: NormalizedProjectSource,
+    findings: _FindingSink,
+) -> list[dict[str, str]]:
+    """Outcome sections the proposal left unrepresented.
+
+    Constraints and unconfirmed sections stay warnings. They do not start a
+    repair and are not returned here. The excerpt is the verbatim request span.
+    """
+
+    by_excerpt = {
+        section.excerpt: section
+        for section in source.narrative_sections
+        if section.evidence_kind == "outcome"
+    }
+    rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in findings.items:
+        if item.code is not FindingCode.UNCOVERED_REQUEST_OUTCOME:
+            continue
+        for reference in item.source_references:
+            section = by_excerpt.get(reference.excerpt or "")
+            if section is None or section.label in seen:
+                continue
+            seen.add(section.label)
+            rows.append(
+                {
+                    "label": section.label,
+                    "title": section.title,
+                    "json_path": "$.user_request",
+                    "excerpt": section.excerpt,
+                }
+            )
+    return rows
+
+
 def _quality_finding_payload(finding: Finding) -> dict[str, Any]:
     return {
         "code": finding.code.value,
@@ -1363,6 +1405,7 @@ def _build_quality_repair_prompt(
     previous: Mapping[str, Any],
     findings: list[Finding],
     coverage_snapshot: list[dict[str, str]] | None = None,
+    narrative_outcomes: list[dict[str, str]] | None = None,
 ) -> str:
     listed = json.dumps(
         [_quality_finding_payload(item) for item in findings],
@@ -1370,6 +1413,7 @@ def _build_quality_repair_prompt(
         indent=2,
     )
     snapshot = json.dumps(coverage_snapshot or [], ensure_ascii=False, indent=2)
+    narrative = json.dumps(narrative_outcomes or [], ensure_ascii=False, indent=2)
     return (
         f"{original_prompt}\n\n"
         "The previous JSON passed deterministic validation but has actionable quality "
@@ -1381,8 +1425,16 @@ def _build_quality_repair_prompt(
         "Match each overlap finding to previous JSON items by local_ids in the finding, then "
         "by title if a local_id is absent. Never treat a canonical UUID or cbl_ id as a "
         "proposal local_id.\n"
-        "- Use each finding's message (titles, canonical IDs, proposal local_ids, overlapping "
-        "action, evidence, and remediation) to locate the named pair. Fix that pair only.\n"
+        "- Use each overlap finding's message (titles, canonical IDs, proposal local_ids, "
+        "overlapping action, evidence, and remediation) to locate the named pair. Fix that "
+        "overlap pair only.\n"
+        "- Uncovered narrative outcomes are listed separately. For each one, add a generated "
+        "user story or a generated acceptance criterion on the story that owns that behavior. "
+        "Copy its excerpt exactly onto provenance whose json_path is $.user_request. Do not "
+        "mark the title or criterion as source. Do not treat the excerpt as structured "
+        "functional-requirement coverage. Skip the entry when the same behavior is already "
+        "represented. Do not add stories for unconfirmed sections, and do not invent API "
+        "endpoints, protocols, schemas, numeric targets, or audit fields.\n"
         "- When one story owns an action named in a finding, remove that leaked action from "
         "the non-owning story's description and acceptance criteria. Keep both stories when "
         "each is independently required for functional-requirement coverage.\n"
@@ -1433,7 +1485,8 @@ def _build_quality_repair_prompt(
         "prerequisite rather than inventing architecture, local databases, endpoints, "
         "API contracts, payload formats, or business rules.\n"
         f"Previously covered functional requirements:\n{snapshot}\n"
-        f"Quality findings:\n{listed}\n\n"
+        f"Quality findings:\n{listed}\n"
+        f"Uncovered narrative outcomes:\n{narrative}\n\n"
         "Previous JSON:\n"
         f"{json.dumps(previous, ensure_ascii=False)}\n"
     )

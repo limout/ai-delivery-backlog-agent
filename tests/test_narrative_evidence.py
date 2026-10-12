@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
@@ -267,3 +268,196 @@ def _fixture_proposal(payload: dict, source) -> dict:
         )
     )
     return {"items": items, "prerequisites": [], "uncertainties": []}
+
+
+def _structured_only_proposal(payload: dict, source) -> dict:
+    proposal = _fixture_proposal(payload, source)
+    proposal["items"] = [
+        item
+        for item in proposal["items"]
+        if not (
+            item["local_id"].startswith("story-fr-")
+            and len(item["local_id"].rsplit("-", 1)[-1]) == 2
+        )
+    ]
+    return proposal
+
+
+def test_quality_repair_names_ignored_narrative_outcomes_without_inventing_them() -> None:
+    payload = json.loads(_INPUT.read_text(encoding="utf-8"))
+    envelope = CopilotWorkflowResponseV1.model_validate(payload)
+    source = load_project_source(envelope)
+    wanted = {
+        section.label: section.excerpt
+        for section in source.narrative_sections
+        if section.label in {"FR-04", "FR-09", "FR-10"}
+    }
+    assert set(wanted) == {"FR-04", "FR-09", "FR-10"}
+    initial = _structured_only_proposal(payload, source)
+    fresh = copy.deepcopy(initial)
+    repaired = copy.deepcopy(initial)
+    for label, excerpt in wanted.items():
+        repaired["items"].append(
+            _item(
+                f"story-{label.lower()}",
+                "user_story",
+                label.replace("-", " ").title(),
+                parent="feat-review",
+                provenance=[_src("$.user_request", "user_request", excerpt)],
+                description=(
+                    "An actor completes this labelled behavior and the portal records the "
+                    "observable result without inventing an unspecified rule."
+                ),
+                title_origin="generated",
+            )
+        )
+    for fact in source.non_functional_requirements:
+        next(item for item in repaired["items"] if item["local_id"] == "story-fr-3")["provenance"].append(
+            _src(fact.json_path, fact.field_name or "non_functional_requirements", fact.text)
+        )
+    ignored = copy.deepcopy(initial)
+    for fact in source.non_functional_requirements:
+        next(item for item in ignored["items"] if item["local_id"] == "story-fr-3")["provenance"].append(
+            _src(fact.json_path, fact.field_name or "non_functional_requirements", fact.text)
+        )
+
+    provider = MockProvider(responses=[initial, repaired, ignored])
+    backlog, findings = decompose_backlog(envelope, provider)
+    prompt = provider.calls[1][0]
+    block = prompt.split("Uncovered narrative outcomes:\n", 1)[1].split("\n\nPrevious JSON:", 1)[0]
+    rows = json.loads(block)
+    excerpts = {row["excerpt"] for row in rows}
+    assert set(wanted.values()) <= excerpts
+    assert all(row["json_path"] == "$.user_request" for row in rows)
+    assert all(row["label"] != "NFR-04" for row in rows)
+    assert all(row["excerpt"] in payload["user_request"] for row in rows)
+    assert "does not treat the excerpt as structured" in prompt.lower() or "not treat the excerpt as structured" in prompt.lower()
+    assert len(provider.calls) == 2
+    assert [call.kind for call in findings.llm_calls] == ["initial", "quality_repair"]
+    assert findings.llm_calls[0].validation_passed is True
+    assert findings.llm_calls[0].accepted is False
+    assert findings.llm_calls[1].accepted is True
+    covered = {
+        reference.json_path
+        for item in backlog.items
+        if item.type is WorkItemType.USER_STORY
+        for reference in item.provenance
+        if reference.json_path.startswith("$.requirements.functional_requirements")
+    }
+    assert covered == {fact.json_path for fact in source.functional_requirements}
+    cited = {
+        reference.excerpt
+        for item in backlog.items
+        for reference in item.provenance
+        if reference.json_path == "$.user_request"
+    }
+    assert set(wanted.values()) <= cited
+    assert not any(
+        item.code is FindingCode.UNCOVERED_REQUEST_OUTCOME and f" {label}:" in item.message
+        for item in findings.items
+        for label in wanted
+    )
+
+    ignored_provider = MockProvider(responses=[fresh, ignored])
+    ignored_backlog, ignored_findings = decompose_backlog(envelope, ignored_provider)
+    assert len(ignored_provider.calls) == 2
+    assert ignored_findings.llm_calls[1].accepted is True
+    ignored_cited = {
+        reference.excerpt
+        for item in ignored_backlog.items
+        for reference in item.provenance
+    }
+    for label, excerpt in wanted.items():
+        assert excerpt not in ignored_cited
+        assert any(
+            item.code is FindingCode.UNCOVERED_REQUEST_OUTCOME and f" {label}:" in item.message
+            for item in ignored_findings.items
+        )
+
+
+def _fr_paths(backlog) -> set[str]:
+    return {
+        reference.json_path
+        for item in backlog.items
+        if item.type is WorkItemType.USER_STORY
+        for reference in item.provenance
+        if reference.json_path.startswith("$.requirements.functional_requirements")
+    }
+
+
+def test_customer_service_visibility_repair_keeps_or_reports_exact_narrative_evidence() -> None:
+    payload = json.loads(_INPUT.read_text(encoding="utf-8"))
+    envelope = CopilotWorkflowResponseV1.model_validate(payload)
+    source = load_project_source(envelope)
+    section = next(item for item in source.narrative_sections if item.label == "FR-09")
+    assert section.evidence_kind == "outcome"
+    assert section.json_path == "$.user_request"
+    assert section.excerpt in payload["user_request"]
+    initial = _structured_only_proposal(payload, source)
+    initial_titles = {item["title"] for item in initial["items"]}
+    repaired = copy.deepcopy(initial)
+    repaired["items"].append(
+        _item(
+            "story-service-visibility",
+            "user_story",
+            "Customer service visibility",
+            parent="feat-review",
+            provenance=[_src("$.user_request", "user_request", section.excerpt)],
+            description=(
+                "An authorized employee can see the available renewal status and whether "
+                "a request needs manual follow-up."
+            ),
+            title_origin="generated",
+        )
+    )
+
+    provider = MockProvider(responses=[copy.deepcopy(initial), repaired])
+    backlog, findings = decompose_backlog(envelope, provider)
+    prompt = provider.calls[1][0]
+    rows = json.loads(
+        prompt.split("Uncovered narrative outcomes:\n", 1)[1].split("\n\nPrevious JSON:", 1)[0]
+    )
+    match = next(row for row in rows if row["label"] == "FR-09")
+    assert match["json_path"] == "$.user_request"
+    assert match["excerpt"] == section.excerpt
+    assert len(provider.calls) == 2
+    assert [call.kind for call in findings.llm_calls] == ["initial", "quality_repair"]
+    assert findings.llm_calls[1].accepted is True
+    assert _fr_paths(backlog) == {fact.json_path for fact in source.functional_requirements}
+    stored = next(item for item in backlog.items if item.title == "Customer service visibility")
+    assert [reference.json_path for reference in stored.provenance] == ["$.user_request"]
+    assert stored.provenance[0].excerpt == section.excerpt
+    assert initial_titles <= {item.title for item in backlog.items}
+    assert len(backlog.items) == len(initial["items"]) + 1
+    assert not any(
+        item.code is FindingCode.UNCOVERED_REQUEST_OUTCOME and " FR-09:" in item.message
+        for item in findings.items
+    )
+
+    ignored = MockProvider(responses=[copy.deepcopy(initial), copy.deepcopy(initial)])
+    ignored_backlog, ignored_findings = decompose_backlog(envelope, ignored)
+    assert len(ignored.calls) == 2
+    assert [call.kind for call in ignored_findings.llm_calls] == ["initial", "quality_repair"]
+    assert ignored_findings.llm_calls[1].accepted is True
+    assert _fr_paths(ignored_backlog) == {fact.json_path for fact in source.functional_requirements}
+    assert all(reference.excerpt != section.excerpt for item in ignored_backlog.items for reference in item.provenance)
+    assert {item.title for item in ignored_backlog.items} == initial_titles
+    assert any(
+        item.code is FindingCode.UNCOVERED_REQUEST_OUTCOME and " FR-09:" in item.message
+        for item in ignored_findings.items
+    )
+
+
+def test_narrative_warnings_alone_do_not_start_a_repair() -> None:
+    payload, proposal = _library_with_sections()
+    provider = MockProvider(proposal)
+    _backlog, findings = decompose_backlog(
+        CopilotWorkflowResponseV1.model_validate(payload), provider
+    )
+    assert len(provider.calls) == 1
+    assert findings.llm_calls[0].kind == "initial"
+    assert findings.llm_calls[0].accepted is True
+    assert any(
+        item.code is FindingCode.UNCOVERED_REQUEST_OUTCOME and " FR-04:" in item.message
+        for item in findings.items
+    )
