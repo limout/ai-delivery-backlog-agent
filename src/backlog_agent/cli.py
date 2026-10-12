@@ -97,6 +97,11 @@ def print_summary(
     uncovered = [
         item for item in findings.items if item.code is FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT
     ]
+    uncovered_nfr = [
+        item
+        for item in findings.items
+        if item.code is FindingCode.UNCOVERED_NON_FUNCTIONAL_REQUIREMENT
+    ]
 
     print("Canonical backlog preview", file=file)
     print(
@@ -115,6 +120,41 @@ def print_summary(
         excerpts = [ref.excerpt for ref in finding.source_references if ref.excerpt]
         if excerpts:
             print(f"  - {excerpts[0]}", file=file)
+    print(
+        f"Non-functional requirements without coverage: {len(uncovered_nfr)}",
+        file=file,
+    )
+    for finding in uncovered_nfr:
+        excerpts = [ref.excerpt for ref in finding.source_references if ref.excerpt]
+        if excerpts:
+            print(f"  - {excerpts[0]}", file=file)
+    if findings.llm_calls:
+        print("LLM calls:", file=file)
+        for call in findings.llm_calls:
+            print(
+                "  "
+                f"kind={call.kind} usable_proposal={str(call.usable_proposal).lower()} "
+                f"validation_passed={str(call.validation_passed).lower()} "
+                f"accepted={str(call.accepted).lower()}",
+                file=file,
+            )
+            if call.item_counts:
+                printed = ", ".join(
+                    f"{name}={call.item_counts[name]}" for name in sorted(call.item_counts)
+                )
+                print(f"    item_counts: {printed}", file=file)
+            if call.covered_fr_paths:
+                print(
+                    "    covered_fr_paths: " + ", ".join(call.covered_fr_paths),
+                    file=file,
+                )
+            if call.lost_fr_paths:
+                print(
+                    "    lost_fr_paths: " + ", ".join(call.lost_fr_paths),
+                    file=file,
+                )
+            for error in call.validation_errors:
+                print(f"    - {error}", file=file)
 
 
 def _type_order() -> tuple[str, ...]:

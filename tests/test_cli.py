@@ -28,6 +28,7 @@ def test_cli_success_writes_backlog_and_findings(tmp_path: Path, capsys: pytest.
     assert "Items by type:" in captured.out
     assert "Findings by code:" in captured.out
     assert "Functional requirements without coverage:" in captured.out
+    assert "Non-functional requirements without coverage:" in captured.out
 
 
 def test_cli_output_matches_generator_serialization(tmp_path: Path) -> None:
@@ -84,6 +85,13 @@ def test_cli_llm_flag_uses_provider_not_deterministic_titles(
     document = json.loads(output.read_text(encoding="utf-8"))
     epics = [item for item in document["backlog"]["items"] if item["type"] == "epic"]
     assert epics[0]["title"] == "Customer self-service policy renewal portal"
+    calls = document["findings"]["llm_calls"]
+    assert calls
+    assert "item_counts" in calls[0]
+    assert "covered_fr_paths" in calls[0]
+    assert "lost_fr_paths" in calls[0]
+    assert "validation_errors" in calls[0]
+    assert calls[0]["item_counts"].get("user_story", 0) >= 1
 
 
 def test_cli_rejects_incomplete_copilot_envelope(

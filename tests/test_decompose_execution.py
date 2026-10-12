@@ -262,7 +262,9 @@ def test_untraced_nfr_is_warning_not_hard_failure() -> None:
         "Encrypt sensitive information in transit."
     ]
     provider = MockProvider(execution_ready_proposal())
-    _backlog, findings = decompose_backlog(CopilotWorkflowResponseV1.model_validate(payload), provider)
+    _backlog, findings = decompose_backlog(
+        CopilotWorkflowResponseV1.model_validate(payload), provider, repair=False
+    )
 
     uncovered = [
         item for item in findings.items if item.code is FindingCode.UNCOVERED_NON_FUNCTIONAL_REQUIREMENT
@@ -413,9 +415,20 @@ def test_generated_ac_cannot_claim_source_origin() -> None:
     proposal = execution_ready_proposal()
     story = next(item for item in proposal["items"] if item["local_id"] == "story-renew")
     story["acceptance_criteria_origins"] = ["source", "source"]
-    with pytest.raises(DecompositionValidationError) as exc:
-        decompose_backlog(_envelope(), MockProvider(proposal), repair=False)
-    assert any("origin=source" in error for error in exc.value.errors)
+    backlog, findings = decompose_backlog(_envelope(), MockProvider(proposal), repair=False)
+    stored = next(
+        item
+        for item in backlog.items
+        if item.type is WorkItemType.USER_STORY and "renew" in item.title.lower()
+    )
+    assert stored.acceptance_criteria[1] == story["acceptance_criteria"][1]
+    generated = [
+        item
+        for item in findings.items
+        if item.code is FindingCode.GENERATED_CONTENT and stored.canonical_id in item.canonical_ids
+    ]
+    assert generated
+    assert "acceptance_criteria" in generated[0].message
 
 
 def test_long_scalar_provenance_uses_source_when_excerpt_drifts() -> None:

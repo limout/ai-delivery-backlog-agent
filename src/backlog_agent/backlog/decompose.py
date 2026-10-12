@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
+from collections import Counter
 from typing import Any, Mapping
 
 from pydantic import ValidationError
@@ -24,14 +27,24 @@ from backlog_agent.backlog.models import (
     WorkItemStatus,
     WorkItemType,
 )
-from backlog_agent.backlog.granularity import record_granularity_findings, task_restates_parent
+from backlog_agent.backlog.granularity import (
+    functional_requirement_paths,
+    record_granularity_findings,
+    task_restates_parent,
+)
 from backlog_agent.backlog.proposal import (
     BacklogProposal,
     ContentOrigin,
     ProposedItem,
     proposal_json_schema,
 )
-from backlog_agent.findings.models import Finding, FindingCode, FindingSeverity, GenerationFindings
+from backlog_agent.findings.models import (
+    Finding,
+    FindingCode,
+    FindingSeverity,
+    GenerationFindings,
+    LlmCallDiagnostic,
+)
 from backlog_agent.llm.exceptions import DecompositionValidationError
 from backlog_agent.llm.provider import AIProvider
 from backlog_agent.source import load_project_source
@@ -39,6 +52,11 @@ from backlog_agent.source.model import (
     NormalizedProjectSource,
     classify_scope,
     fact_texts,
+    looks_like_timeline_or_estimate,
+)
+from backlog_agent.source.request_headings import (
+    heading_appears_represented,
+    parse_labeled_request_outcomes,
 )
 
 _PARENT_TYPE: dict[WorkItemType, WorkItemType | None] = {
@@ -49,12 +67,15 @@ _PARENT_TYPE: dict[WorkItemType, WorkItemType | None] = {
     WorkItemType.SUBTASK: WorkItemType.TASK,
 }
 
+_LOG = logging.getLogger("backlog_agent.decompose")
+
 _QUALITY_REPAIR_CODES = frozenset(
     {
         FindingCode.OVERSIZED_STORY,
         FindingCode.MISSING_IMPLEMENTATION_DETAIL,
         FindingCode.OVERLAPPING_STORY_RESPONSIBILITY,
         FindingCode.DUPLICATE_ACCEPTANCE_CRITERION,
+        FindingCode.UNCOVERED_NON_FUNCTIONAL_REQUIREMENT,
     }
 )
 
@@ -80,7 +101,18 @@ _GENERIC_TASK_TITLES = frozenset(
         "subtask",
         "do work",
         "implement feature",
+        "implement backend",
+        "do testing",
+        "handle errors",
+        "error handling",
+        "backend work",
     }
+)
+
+_SENSITIVE_ERROR = re.compile(
+    r"(?i)(?:api[_-]?key|secret|password|token|authorization)\s*[:=]\s*\S+"
+    r"|bearer\s+\S+"
+    r"|AIza[0-9A-Za-z_\-]{8,}"
 )
 
 def decompose_backlog(
@@ -101,26 +133,36 @@ def decompose_backlog(
     source = load_project_source(envelope)
     schema = proposal_json_schema()
     prompt = _build_prompt(source)
-    raw = provider.generate_json(prompt, schema)
-    result = _try_materialize(source, raw)
+    calls: list[LlmCallDiagnostic] = []
+    raw, result = _invoke_provider(provider, prompt, schema, source, calls, "initial")
 
     if result.ok:
         quality = _actionable_quality_findings(result.findings)
         if repair and quality:
-            quality_prompt = _build_quality_repair_prompt(prompt, raw, quality)
-            repaired = provider.generate_json(quality_prompt, schema)
-            second = _try_materialize(source, repaired)
+            snapshot = _fr_coverage_snapshot(result.proposal)
+            quality_prompt = _build_quality_repair_prompt(prompt, raw, quality, snapshot)
+            _repaired, second = _invoke_provider(
+                provider, quality_prompt, schema, source, calls, "quality_repair"
+            )
             if second.ok:
-                return second.backlog, GenerationFindings(items=second.findings.items)
-            return result.backlog, GenerationFindings(items=result.findings.items)
-        return result.backlog, GenerationFindings(items=result.findings.items)
+                _mark_accepted(calls, "quality_repair")
+                return _accepted(second, calls)
+            _record_lost_fr_paths(calls, result.proposal, second.proposal)
+            _mark_accepted(calls, "initial")
+            return _accepted(result, calls)
+        _mark_accepted(calls, "initial")
+        return _accepted(result, calls)
 
     if repair:
         repair_prompt = _build_repair_prompt(prompt, raw, result.errors)
-        repaired = provider.generate_json(repair_prompt, schema)
-        second = _try_materialize(source, repaired)
+        _repaired, second = _invoke_provider(
+            provider, repair_prompt, schema, source, calls, "hard_repair"
+        )
         if second.ok:
-            return second.backlog, GenerationFindings(items=second.findings.items)
+            _note_dropped_grounded_tasks(raw, second)
+            _mark_accepted(calls, "hard_repair")
+            return _accepted(second, calls)
+        _record_lost_fr_paths(calls, result.proposal, second.proposal)
         result = second
 
     findings = result.findings
@@ -131,7 +173,9 @@ def decompose_backlog(
             message="LLM backlog proposal failed independent validation after at most one repair.",
         )
     )
-    raise DecompositionValidationError(result.errors, GenerationFindings(items=findings.items))
+    raise DecompositionValidationError(
+        result.errors, GenerationFindings(items=findings.items, llm_calls=calls)
+    )
 
 
 class _MaterializeResult:
@@ -142,11 +186,15 @@ class _MaterializeResult:
         errors: list[str],
         findings: _FindingSink,
         backlog: CanonicalBacklogV1 | None = None,
+        parsed: bool = True,
+        proposal: BacklogProposal | None = None,
     ) -> None:
         self.ok = ok
         self.errors = errors
         self.findings = findings
         self.backlog = backlog
+        self.parsed = parsed
+        self.proposal = proposal
 
 
 def _try_materialize(source: NormalizedProjectSource, raw: Mapping[str, Any]) -> _MaterializeResult:
@@ -162,19 +210,24 @@ def _try_materialize(source: NormalizedProjectSource, raw: Mapping[str, Any]) ->
         for err in exc.errors():
             loc = ".".join(str(part) for part in err.get("loc", ()))
             errors.append(f"{loc}: {err.get('msg')}")
-        return _MaterializeResult(ok=False, errors=errors or ["proposal is not a valid object"], findings=findings)
+        return _MaterializeResult(
+            ok=False,
+            errors=errors or ["proposal is not a valid object"],
+            findings=findings,
+            parsed=False,
+        )
 
     errors.extend(_structural_errors(proposal))
     errors.extend(_provenance_and_scope_errors(source, proposal, findings))
     errors.extend(_execution_quality_errors(source, proposal))
     if errors:
-        return _MaterializeResult(ok=False, errors=errors, findings=findings)
+        return _MaterializeResult(ok=False, errors=errors, findings=findings, proposal=proposal)
 
     try:
         backlog = _to_canonical(source, proposal, findings)
     except (ValidationError, ValueError) as exc:
         errors.append(str(exc))
-        return _MaterializeResult(ok=False, errors=errors, findings=findings)
+        return _MaterializeResult(ok=False, errors=errors, findings=findings, proposal=proposal)
 
     _record_uncovered_functional_requirements(source, backlog.items, findings)
     uncovered = [
@@ -186,14 +239,19 @@ def _try_materialize(source: NormalizedProjectSource, raw: Mapping[str, Any]) ->
             errors.append(
                 "Uncovered functional requirement: " + (excerpts[0] if excerpts else item.message)
             )
-        return _MaterializeResult(ok=False, errors=errors, findings=findings)
+        return _MaterializeResult(
+            ok=False, errors=errors, findings=findings, proposal=proposal, backlog=backlog
+        )
 
     _record_generated_content(source, proposal, backlog, findings)
     _record_uncertainties(proposal, backlog, findings)
     _record_prerequisites(proposal, findings)
     _record_requirement_coverage_findings(source, backlog.items, findings)
     record_granularity_findings(source, backlog, findings, proposal=proposal)
-    return _MaterializeResult(ok=True, errors=[], findings=findings, backlog=backlog)
+    _record_uncovered_request_outcomes(source, backlog, findings, proposal)
+    return _MaterializeResult(
+        ok=True, errors=[], findings=findings, backlog=backlog, proposal=proposal
+    )
 
 
 def _structural_errors(proposal: BacklogProposal) -> list[str]:
@@ -308,8 +366,8 @@ def _provenance_and_scope_errors(
             if _title_is_exact_source_copy(item.title, excerpts):
                 pass
             elif _title_is_grounded_paraphrase(item.title, excerpts):
-                # Concise epic titles drawn from a longer source field are generated,
-                # not source copies. Correct the origin; keep provenance grounding.
+                # A title that restates a cited excerpt without copying it is generated.
+                # Correct the origin and keep the real provenance excerpt.
                 item.title_origin = ContentOrigin.GENERATED
             else:
                 errors.append(
@@ -444,9 +502,13 @@ def _provenance_ref_errors(
                 ref.excerpt = resolved
             continue
         if ref.excerpt != resolved:
-            # Unique scalar fields are identified by path. Array elements still
-            # require an exact excerpt so the wrong index cannot be papered over.
+            # Unique scalar fields are identified by path. A $.user_request excerpt
+            # may instead be one exact labelled section published as narrative
+            # evidence. Any other scalar mismatch is rewritten to the full field.
+            # Array elements still require an exact excerpt.
             if "[" not in ref.json_path:
+                if _is_exact_narrative_excerpt(source, ref.json_path, ref.excerpt):
+                    continue
                 ref.excerpt = resolved
                 continue
             errors.append(f"{label}: excerpt does not equal the source value at {ref.json_path}")
@@ -467,9 +529,9 @@ def _origin_value_errors(source: NormalizedProjectSource, item: ProposedItem) ->
     for index, criterion in enumerate(item.acceptance_criteria):
         origin = _list_origin(item.acceptance_criteria_origins, index, criterion, source_acs)
         if origin is ContentOrigin.SOURCE and normalize_source_text(criterion) not in source_acs:
-            errors.append(
-                f"{item.local_id}.acceptance_criteria[{index}]: origin=source but text is not a Copilot acceptance criterion"
-            )
+            # Edited or scoped criterion text is generated. Keep provenance paths/excerpts;
+            # do not treat rewritten text as a source copy.
+            item.acceptance_criteria_origins[index] = ContentOrigin.GENERATED
     source_tests: set[str] = set()
     for index, requirement in enumerate(item.test_requirements):
         origin = _list_origin(item.test_requirements_origins, index, requirement, source_tests)
@@ -526,6 +588,15 @@ def _execution_quality_errors(source: NormalizedProjectSource, proposal: Backlog
                     "requirement alone; attach that constraint's path and excerpt to a story "
                     "that cites a functional requirement"
                 )
+            fr_paths = sorted(set(functional_requirement_paths(item)))
+            if len(fr_paths) >= 2:
+                errors.append(
+                    f"{item.local_id}: user stories must not combine independently testable "
+                    "outcomes from distinct functional requirements; keep one functional "
+                    "requirement path per story and cover each remaining requirement with its "
+                    "own story. Additional NFR or acceptance-criterion paths on the same story "
+                    "are allowed"
+                )
 
         if item.type is WorkItemType.FEATURE and normalize_source_text(item.title) in workstreams:
             errors.append(
@@ -581,10 +652,71 @@ def _title_is_exact_source_copy(title: str, excerpts: list[str]) -> bool:
     )
 
 
+_TITLE_GENERIC = frozenset(
+    {
+        "allow",
+        "allows",
+        "customer",
+        "customers",
+        "eligible",
+        "member",
+        "members",
+        "must",
+        "online",
+        "shall",
+        "system",
+        "their",
+        "user",
+        "users",
+    }
+)
+_DISPLAY_TITLE_TOKENS = frozenset(
+    {"browse", "display", "list", "listing", "read", "review", "show", "view"}
+)
+
+
+def _title_stem(token: str) -> str:
+    if token.endswith("ies") and len(token) > 5:
+        return token[:-3] + "y"
+    if token.endswith("s") and not token.endswith("ss") and len(token) > 4:
+        return token[:-1]
+    return token
+
+
+def _title_content_tokens(text: str) -> list[str]:
+    tokens: list[str] = []
+    for raw in normalize_source_text(text).split():
+        token = _title_stem(raw.strip(".,;:!?\"'`()[]{}"))
+        if len(token) >= 4 and token not in _TITLE_GENERIC:
+            tokens.append(token)
+    return tokens
+
+
+def _title_tokens_related(left: str, right: str) -> bool:
+    if left == right:
+        return True
+    short, long = (left, right) if len(left) <= len(right) else (right, left)
+    if not long.startswith(short):
+        return False
+    extra = long[len(short) :]
+    if extra == "al" and len(short) >= 5:
+        return True
+    if extra in {"ing", "ed", "ion", "tion", "ation", "es"} and len(short) >= 6:
+        return True
+    if extra == "s" and len(short) >= 4:
+        return True
+    return False
+
+
+def _title_token_covered(token: str, excerpt_tokens: set[str]) -> bool:
+    return any(_title_tokens_related(token, other) for other in excerpt_tokens)
+
+
 def _title_is_grounded_paraphrase(title: str, excerpts: list[str]) -> bool:
     normalized_title = normalize_source_text(title)
     if len(normalized_title) < 12:
         return False
+    title_tokens = _title_content_tokens(title)
     for excerpt in excerpts:
         if not excerpt:
             continue
@@ -594,6 +726,18 @@ def _title_is_grounded_paraphrase(title: str, excerpts: list[str]) -> bool:
         if normalized_title in normalized_excerpt:
             return True
         if len(normalized_excerpt) >= 12 and normalized_excerpt in normalized_title:
+            return True
+        excerpt_tokens = set(_title_content_tokens(excerpt))
+        if len(title_tokens) < 2 or len(excerpt_tokens) < 2:
+            continue
+        matched = [token for token in title_tokens if _title_token_covered(token, excerpt_tokens)]
+        unmatched = [token for token in title_tokens if token not in matched]
+        if len(matched) < 2:
+            continue
+        if not unmatched:
+            return True
+        excerpt_has_display = any(token in _DISPLAY_TITLE_TOKENS for token in excerpt_tokens)
+        if excerpt_has_display and all(token in _DISPLAY_TITLE_TOKENS for token in unmatched):
             return True
     return False
 
@@ -718,6 +862,125 @@ def _record_uncovered_functional_requirements(
         )
 
 
+def _is_exact_narrative_excerpt(source: NormalizedProjectSource, json_path: str, excerpt: str) -> bool:
+    if json_path != source.request.json_path or not excerpt:
+        return False
+    return any(excerpt == section.excerpt for section in source.narrative_sections)
+
+
+def _narrative_excerpt_cited(backlog: CanonicalBacklogV1, excerpt: str) -> bool:
+    for item in backlog.items:
+        for reference in item.provenance:
+            if reference.json_path == "$.user_request" and reference.excerpt == excerpt:
+                return True
+    return False
+
+
+def _record_uncovered_request_outcomes(
+    source: NormalizedProjectSource,
+    backlog: CanonicalBacklogV1,
+    findings: _FindingSink,
+    proposal: BacklogProposal | None = None,
+) -> None:
+    """Warn when labelled narrative sections are not represented. Heuristic only.
+
+    Structured functional and non-functional coverage is recorded separately.
+    Citing a narrative excerpt does not satisfy that contract.
+    """
+
+    structured_blob = " ".join(
+        fact.text
+        for fact in (
+            *source.functional_requirements,
+            *source.non_functional_requirements,
+            *source.acceptance_criteria,
+        )
+    )
+    story_blob = " ".join(
+        " ".join(
+            [
+                item.title,
+                item.description,
+                *list(item.acceptance_criteria or ()),
+                *list(item.test_requirements or ()),
+            ]
+        )
+        for item in backlog.items
+        if item.type in {WorkItemType.FEATURE, WorkItemType.USER_STORY, WorkItemType.TASK}
+    )
+    uncertainty_blob = ""
+    if proposal is not None:
+        notes = list(proposal.uncertainties)
+        notes.extend(note for item in proposal.items for note in item.uncertainties)
+        notes.extend(item.text for item in proposal.prerequisites)
+        uncertainty_blob = " ".join(notes)
+    covered_labels: set[str] = set()
+    for section in source.narrative_sections:
+        if section.evidence_kind == "context" or not section.label:
+            continue
+        covered_labels.add(section.label)
+        if looks_like_timeline_or_estimate(section.title):
+            continue
+        cited = _narrative_excerpt_cited(backlog, section.excerpt)
+        represented = cited or heading_appears_represented(section.title, structured_blob)
+        if section.evidence_kind == "unconfirmed":
+            represented = represented or heading_appears_represented(
+                section.title, f"{story_blob} {uncertainty_blob}"
+            )
+            if represented:
+                continue
+            message = (
+                f"Heuristic: narrative section {section.label}: {section.title!r} says the detail is "
+                "unconfirmed. This is not a structured requirement. Do not invent the missing "
+                "rule, target, or mechanism. Record an uncertainty, or a discovery task when a "
+                "source unknown supports a check, and cite this exact $.user_request excerpt."
+            )
+        else:
+            represented = represented or heading_appears_represented(section.title, story_blob)
+            if represented:
+                continue
+            kind_word = "constraint" if section.evidence_kind == "constraint" else "outcome"
+            message = (
+                f"Heuristic: narrative {kind_word} {section.label}: {section.title!r} is not "
+                "represented by a generated story, acceptance criterion, or exact provenance "
+                "excerpt. This is labelled text inside $.user_request, not a structured "
+                "functional or non-functional requirement. Token matching does not prove "
+                "semantic coverage."
+            )
+        findings.add(
+            Finding(
+                severity=FindingSeverity.WARNING,
+                code=FindingCode.UNCOVERED_REQUEST_OUTCOME,
+                message=message,
+                source_references=[
+                    _source_ref("$.user_request", "user_request", excerpt=section.excerpt),
+                ],
+            )
+        )
+    for heading in parse_labeled_request_outcomes(source.request.text):
+        if heading.label in covered_labels or looks_like_timeline_or_estimate(heading.title):
+            continue
+        if heading_appears_represented(heading.title, structured_blob):
+            continue
+        if heading_appears_represented(heading.title, f"{story_blob} {uncertainty_blob}"):
+            continue
+        findings.add(
+            Finding(
+                severity=FindingSeverity.WARNING,
+                code=FindingCode.UNCOVERED_REQUEST_OUTCOME,
+                message=(
+                    f"Heuristic: labeled request heading {heading.label}: {heading.title!r} is not "
+                    "clearly reflected in structured requirements or in any story title, description, "
+                    "or acceptance criterion. Token matching does not prove semantic coverage. Do not "
+                    "invent a json_path for this heading."
+                ),
+                source_references=[
+                    _source_ref("$.user_request", "user_request", excerpt=None),
+                ],
+            )
+        )
+
+
 def _record_requirement_coverage_findings(
     source: NormalizedProjectSource,
     items: list[Any],
@@ -755,6 +1018,17 @@ def _record_requirement_coverage_findings(
         )
 
 
+def _uncertainty_key(note: str) -> str:
+    return normalize_source_text(note).strip(".,;:")
+
+
+def _uncertainty_repeats(candidate: str, existing: str) -> bool:
+    if candidate == existing:
+        return True
+    short, long = (candidate, existing) if len(candidate) <= len(existing) else (existing, candidate)
+    return len(short) >= 40 and short in long
+
+
 def _record_uncertainties(
     proposal: BacklogProposal,
     backlog: CanonicalBacklogV1,
@@ -762,28 +1036,28 @@ def _record_uncertainties(
 ) -> None:
     local_ids = [item.local_id for item in proposal.items]
     by_canonical = {local_ids[index]: backlog.items[index].canonical_id for index in range(len(local_ids))}
+    notes: list[tuple[str, list[str]]] = []
     for note in proposal.uncertainties:
-        if not note.strip():
+        if note.strip():
+            notes.append((note, []))
+    for item in proposal.items:
+        for note in item.uncertainties:
+            if note.strip():
+                notes.append((note, [by_canonical[item.local_id]]))
+    kept: list[str] = []
+    for note, canonical_ids in notes:
+        key = _uncertainty_key(note)
+        if not key or any(_uncertainty_repeats(key, previous) for previous in kept):
             continue
+        kept.append(key)
         findings.add(
             Finding(
                 severity=FindingSeverity.WARNING,
                 code=FindingCode.AMBIGUOUS_DECOMPOSITION,
                 message=note,
+                canonical_ids=canonical_ids,
             )
         )
-    for item in proposal.items:
-        for note in item.uncertainties:
-            if not note.strip():
-                continue
-            findings.add(
-                Finding(
-                    severity=FindingSeverity.WARNING,
-                    code=FindingCode.AMBIGUOUS_DECOMPOSITION,
-                    message=note,
-                    canonical_ids=[by_canonical[item.local_id]],
-                )
-            )
 
 
 def _build_prompt(source: NormalizedProjectSource) -> str:
@@ -807,33 +1081,70 @@ def _build_prompt(source: NormalizedProjectSource) -> str:
         "uncertainties or prerequisites instead.\n"
         "- Do not force a Task under every Story. Atomic stories remain valid when the story is "
         "already a concrete slice. Do not artificially split work into duplicate or numbered filler.\n"
-        "- Trace non-functional requirements by putting their exact source path on the item that "
-        "implements or verifies them. Do not create a user_story whose provenance contains a "
-        "non-functional requirement path but no functional requirement path. NFRs are constraints "
-        "on related functional work, not standalone stories.\n\n"
+        "- Trace non-functional requirements by putting their exact source path and full excerpt "
+        "on an existing item that implements or verifies that constraint, alongside a functional "
+        "requirement when the item is a user_story. A story that only discusses the idea is not "
+        "coverage. Do not create a user_story whose provenance contains a non-functional "
+        "requirement path but no functional requirement path. Constraints such as not replacing "
+        "an existing system, or an external system remaining the source of truth, belong on the "
+        "FR-backed story that is bound by them.\n\n"
         "Product tree:\n"
         "- One concise Epic title. Do not paste the entire request as the title.\n"
-        "- Features are in-scope product capabilities. Do not copy delivery workstreams into Features.\n"
-        "- Every in-scope functional requirement needs at least one user_story whose provenance "
-        "json_path points at that requirement and whose excerpt equals the source text.\n"
+        "- Features are in-scope product capabilities. Do not copy delivery workstreams into Features. "
+        "Group stories whose outcomes the feature title and description actually describe. Cite "
+        "provenance for a source capability that supports that group. A child does not have to repeat "
+        "the feature's wording. Do not create extra features to reach a count. Do not place "
+        "authentication, policy review, renewal submission, external-system integration, and "
+        "confirmation under one feature when the cited excerpt covers only one of those outcomes.\n"
+        "- Every item in required_functional_coverage needs its own user_story whose provenance "
+        "json_path and excerpt equal that entry. The initial proposal is invalid if any path is "
+        "missing. A narrative section does not cover a functional requirement. Never place two "
+        "distinct functional-requirement paths on one user_story. A story may also cite related "
+        "NFR, acceptance-criterion, and narrative excerpts.\n"
         "- Story descriptions must explain actor, behaviour, and outcome. Do not restate the title.\n"
-        "- Bind source acceptance criteria onto the story they most clearly verify and mark "
-        "acceptance_criteria_origins as source. Additional story-specific criteria may be proposed "
-        "with origin generated. If a source acceptance criterion concatenates independently owned "
-        "outcomes, do not copy that entire criterion onto every involved story. Create generated "
-        "acceptance criteria scoped to each story's owned outcome. Keep source_excerpt and json_path "
-        "accurate to the original compound criterion or the matching functional requirement. Never "
-        "mark rewritten or shortened criterion text as origin=source. Both functional requirements "
-        "must remain covered. Do not invent additional systems, endpoints, databases, workflows, "
-        "or acceptance criteria the source does not state. If binding is uncertain, say so in "
-        "uncertainties.\n"
+        "- Bind each source acceptance criterion to the single story whose outcome that criterion "
+        "actually verifies, and mark acceptance_criteria_origins as source. Do not attach a source "
+        "criterion to an authentication, integration, notification, or discovery story merely to "
+        "obtain a provenance path when the criterion describes a different user outcome. Do not "
+        "reuse an authentication or authorization criterion as a generic criterion on unrelated "
+        "stories. Additional story-specific criteria may be proposed with origin generated. If a "
+        "source acceptance criterion concatenates independently owned outcomes, such as listing "
+        "records and reviewing terms, do not copy that compound sentence into any story's "
+        "acceptance_criteria. The listing story gets a generated criterion for list visibility "
+        "only. The terms story gets a generated criterion for reviewing terms only. You may cite "
+        "the compound criterion path on at most one story, and its provenance excerpt must equal "
+        "the full source field. The acceptance criterion text must still be the scoped generated "
+        "sentence, with origin generated, never the compound sentence marked as source. Do not "
+        "put that source path on both stories. Create generated acceptance "
+        "criteria scoped to each story's owned outcome. Keep source excerpts and json_path accurate "
+        "to the original compound criterion or the matching functional requirement. Never mark "
+        "rewritten or shortened criterion text as origin=source. Never represent generated "
+        "acceptance criteria as verbatim source text. A customer submission story and the story "
+        "that integrates with a downstream system stay distinct: the submission story may say the "
+        "request is sent to that system, and that mention is a dependency, not shared ownership "
+        "of the integration story's acceptance criteria. Each functional requirement must remain "
+        "covered on its own story. Do not invent additional systems, endpoints, databases, "
+        "workflows, authentication protocols, or acceptance criteria the source does not state. "
+        "If binding is uncertain, say so in uncertainties.\n"
         "- Acceptance criteria are observable outcomes. test_requirements are verification activities "
         "(tests to run, data to assert, integrations to stub). They must not copy acceptance criteria. "
         "Mark test_requirements generated.\n"
         "- Add Tasks only when they are concrete, independently trackable implementation, integration, "
-        "testing, or operational work. Do not force a Task under every Story. If the Story is already "
-        "an atomic implementable slice, leave it without child tasks. If implementation work is needed "
-        "but unknown, record an uncertainty instead of inventing filler.\n"
+        "testing, operational, or investigation work. Do not force a Task under every Story and do "
+        "not require any minimum number of Tasks, Features, or Stories. If the Story is already an "
+        "atomic implementable slice and no checkable unknown applies, leave it without child tasks. "
+        "Add an investigation task when a source unknown, open question, or blocking dependency names "
+        "a verifiable objective, for example confirming whether API documentation is available and "
+        "complete, verifying whether a sandbox or test environment is available, or determining "
+        "whether a documented status lookup or recovery from an uncertain outcome can be exercised "
+        "where documentation or an environment exists. Each investigation task needs a bounded "
+        "objective, a verifiable result such as available, incomplete, unavailable, or not yet "
+        "verifiable, and provenance equal to that unknown or dependency path and excerpt. State "
+        "that the capability is not confirmed. Do not treat an assumption as a verified capability. "
+        "Do not invent endpoints, idempotency support, schemas, databases, frameworks, "
+        "authentication protocols, or integration guarantees. Do not add generic filler such as "
+        "implement backend, do testing, or handle errors. If a question cannot yet be checked, "
+        "record an uncertainty or unresolved prerequisite instead. Zero tasks is valid.\n"
         "- Treat listed deliverables as inspiration for necessary work, not a 1:1 task dump.\n"
         "- Subtasks only when they add tracking value as independently completable slices. Do not copy "
         "every milestone or phase as a Subtask.\n"
@@ -847,18 +1158,40 @@ def _build_prompt(source: NormalizedProjectSource) -> str:
         "timeline or estimate constraint into a committed milestone, date, or work item.\n"
         "- Trace a non-functional requirement only by putting its exact source path and excerpt on an "
         "item that implements or verifies that constraint. A related Feature or Story without that "
-        "path does not count as coverage. Do not promote an NFR into its own user_story. Timeline "
-        "and estimate statements are planning constraints, not committed work items.\n"
-        "- title_origin=source only when title equals a provenance excerpt. A concise epic title "
-        "taken from a longer request or heading is generated, not source. Provenance excerpts must "
-        "equal the source field. Preserve remaining uncertainty in uncertainties.\n"
+        "path does not count as coverage. Attach source-of-truth and do-not-replace-existing-system "
+        "constraints to the FR-backed integration or portal story they constrain. Do not promote an "
+        "NFR into its own user_story. Timeline and estimate statements are planning constraints, "
+        "not committed work items.\n"
+        "- title_origin=source only when the title string equals a provenance excerpt. A grounded "
+        "paraphrase, including a shorter or reordered wording of the same fact, is "
+        "title_origin=generated and must still cite the real excerpt. Do not mark a paraphrase as "
+        "source. Array provenance excerpts must equal the source element. A $.user_request excerpt "
+        "must be the full field or an exact narrative_sections or narrative_context excerpt. Do not "
+        "cite a summary. Record each remaining uncertainty once. Do not copy the same unknown onto "
+        "the proposal and again onto an item.\n"
         "- local_id values are your own stable keys (not tracker keys, not cbl_ ids).\n"
         "- Hierarchy is epic→feature→user_story→task→subtask.\n"
         "- Provenance json_path must be the Copilot envelope path on each fact (the fact's json_path "
         "value). Do not cite prompt-object keys or adapter attribute names such as $.contract_id, "
         "$.capabilities, $.functional_requirements, $.acceptance_criteria, "
         "$.non_functional_requirements, or $.blocking_dependencies. Array facts require the indexed "
-        "envelope path (for example $.requirements.functional_requirements[0]).\n\n"
+        "envelope path (for example $.requirements.functional_requirements[0]). Never invent paths "
+        "such as $.user_request.FR-01; labeled request headings are context, not structured facts.\n"
+        "- Feature provenance should describe the same capability as its child stories. Do not attach "
+        "a feature to a capability excerpt that none of its children implement.\n"
+        "- narrative_sections are exact labelled spans inside $.user_request. They are not "
+        "structured requirements and their json_path is only $.user_request. evidence_kind "
+        "outcome: when the section is independently testable and no structured requirement "
+        "already states it, add a generated user story, or a generated acceptance criterion on "
+        "the story that owns that responsibility. evidence_kind constraint: attach it to the "
+        "functional story it constrains; do not add a story that has only a constraint. "
+        "evidence_kind unconfirmed: do not invent the missing rule, target, or mechanism; record "
+        "an uncertainty, or one discovery task when a source unknown supports a check. Cite the "
+        "exact excerpt. Titles and criteria for this evidence are generated. Independently "
+        "testable examples include eligibility, duplicate submission, uncertain results, status "
+        "visibility, operational visibility, and auditability. Combine outcomes that are one "
+        "testable responsibility. Do not add one item per paragraph or per heading. "
+        "narrative_context is grounding only. labeled_request_outcomes remain headings, not paths.\n\n"
         "Normalized project facts:\n"
         f"{json.dumps(source.prompt_facts, ensure_ascii=False, indent=2)}\n"
     )
@@ -866,6 +1199,153 @@ def _build_prompt(source: NormalizedProjectSource) -> str:
 
 def _actionable_quality_findings(findings: _FindingSink) -> list[Finding]:
     return [item for item in findings.items if item.code in _QUALITY_REPAIR_CODES]
+
+
+def _proposal_item_counts(proposal: BacklogProposal | None) -> dict[str, int]:
+    if proposal is None:
+        return {}
+    counts = Counter(item.type.value for item in proposal.items)
+    return {name: counts[name] for name in sorted(counts)}
+
+
+def _covered_fr_paths(proposal: BacklogProposal | None) -> list[str]:
+    if proposal is None:
+        return []
+    paths: set[str] = set()
+    for item in proposal.items:
+        if item.type is not WorkItemType.USER_STORY:
+            continue
+        for reference in item.provenance:
+            if _is_requirement_path(reference.json_path, _FUNCTIONAL_REQUIREMENT_PATH):
+                paths.add(reference.json_path)
+    return sorted(paths)
+
+
+def _fr_coverage_snapshot(proposal: BacklogProposal | None) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    if proposal is None:
+        return rows
+    for item in proposal.items:
+        if item.type is not WorkItemType.USER_STORY:
+            continue
+        for reference in item.provenance:
+            if not _is_requirement_path(reference.json_path, _FUNCTIONAL_REQUIREMENT_PATH):
+                continue
+            key = (item.local_id, reference.json_path)
+            if key in seen:
+                continue
+            seen.add(key)
+            excerpt = (reference.excerpt or "")[:240]
+            rows.append(
+                {
+                    "local_id": item.local_id,
+                    "json_path": reference.json_path,
+                    "excerpt": excerpt,
+                }
+            )
+    return rows
+
+
+def _record_lost_fr_paths(
+    calls: list[LlmCallDiagnostic],
+    initial: BacklogProposal | None,
+    repaired: BacklogProposal | None,
+) -> None:
+    lost = [path for path in _covered_fr_paths(initial) if path not in set(_covered_fr_paths(repaired))]
+    if not lost:
+        return
+    bounded = lost[:20]
+    for index, event in enumerate(calls):
+        if event.kind in {"quality_repair", "hard_repair"} and not event.accepted:
+            calls[index] = event.model_copy(update={"lost_fr_paths": bounded})
+
+
+def _diagnostic(
+    kind: str,
+    result: _MaterializeResult | None,
+    *,
+    usable_proposal: bool | None = None,
+) -> LlmCallDiagnostic:
+    parsed = result.parsed if result is not None else False
+    ok = result.ok if result is not None else False
+    errors = list(result.errors) if result is not None and not ok else []
+    proposal = result.proposal if result is not None else None
+    event = LlmCallDiagnostic(
+        kind=kind,  # type: ignore[arg-type]
+        usable_proposal=parsed if usable_proposal is None else usable_proposal,
+        validation_passed=ok,
+        accepted=False,
+        validation_errors=_public_validation_errors(errors),
+        item_counts=_proposal_item_counts(proposal),
+        covered_fr_paths=_covered_fr_paths(proposal),
+    )
+    _LOG.info(
+        "llm_call kind=%s usable_proposal=%s validation_passed=%s accepted=%s "
+        "error_count=%s item_counts=%s covered_fr=%s",
+        event.kind,
+        event.usable_proposal,
+        event.validation_passed,
+        event.accepted,
+        len(event.validation_errors),
+        event.item_counts,
+        event.covered_fr_paths,
+    )
+    return event
+
+
+def _public_validation_errors(errors: list[str]) -> list[str]:
+    """Keep short deterministic messages. Never include prompts, payloads, or secrets."""
+
+    cleaned: list[str] = []
+    for error in errors[:20]:
+        text = " ".join(error.split())
+        text = _SENSITIVE_ERROR.sub("[redacted]", text)
+        lowered = text.lower()
+        if "normalized project facts" in lowered or "generate_json" in lowered:
+            text = "validation error omitted because it contained prompt or payload text"
+        if len(text) > 300:
+            text = text[:297] + "..."
+        cleaned.append(text)
+    return cleaned
+
+
+def _mark_accepted(calls: list[LlmCallDiagnostic], kind: str) -> None:
+    for index, event in enumerate(calls):
+        if event.kind == kind:
+            updated = event.model_copy(update={"accepted": True})
+            calls[index] = updated
+            _LOG.info(
+                "llm_call kind=%s usable_proposal=%s validation_passed=%s accepted=%s",
+                updated.kind,
+                updated.usable_proposal,
+                updated.validation_passed,
+                updated.accepted,
+            )
+            return
+
+
+def _accepted(result: _MaterializeResult, calls: list[LlmCallDiagnostic]) -> tuple[CanonicalBacklogV1, GenerationFindings]:
+    assert result.backlog is not None
+    return result.backlog, GenerationFindings(items=result.findings.items, llm_calls=calls)
+
+
+def _invoke_provider(
+    provider: AIProvider,
+    prompt: str,
+    schema: Mapping[str, Any],
+    source: NormalizedProjectSource,
+    calls: list[LlmCallDiagnostic],
+    kind: str,
+) -> tuple[Any, _MaterializeResult]:
+    try:
+        raw = provider.generate_json(prompt, schema)
+    except Exception:
+        calls.append(_diagnostic(kind, None, usable_proposal=False))
+        raise
+    result = _try_materialize(source, raw)
+    calls.append(_diagnostic(kind, result))
+    return raw, result
 
 
 def _quality_finding_payload(finding: Finding) -> dict[str, Any]:
@@ -882,12 +1362,14 @@ def _build_quality_repair_prompt(
     original_prompt: str,
     previous: Mapping[str, Any],
     findings: list[Finding],
+    coverage_snapshot: list[dict[str, str]] | None = None,
 ) -> str:
     listed = json.dumps(
         [_quality_finding_payload(item) for item in findings],
         ensure_ascii=False,
         indent=2,
     )
+    snapshot = json.dumps(coverage_snapshot or [], ensure_ascii=False, indent=2)
     return (
         f"{original_prompt}\n\n"
         "The previous JSON passed deterministic validation but has actionable quality "
@@ -909,22 +1391,139 @@ def _build_quality_repair_prompt(
         "source excerpts and json_path accurate. Never mark edited criterion text as "
         "origin=source.\n"
         "- Split a Story only when source evidence supports independently testable outcomes.\n"
-        "- Remove duplicated responsibilities and acceptance criteria across Stories.\n"
-        "- Add concrete child Tasks only when the source supports distinct implementation "
-        "or verification work.\n"
+        "- Remove duplicated responsibilities and acceptance criteria across Stories. Bind each "
+        "source acceptance criterion to the story whose outcome it verifies; do not copy a "
+        "viewing or submission criterion onto an authentication or integration story merely "
+        "to obtain provenance.\n"
+        "- Add concrete child Tasks only when the source supports distinct implementation, "
+        "verification, or discovery work. Do not invent endpoints or filler tasks.\n"
+        "- Narrative sections are exact $.user_request excerpts, not structured requirements. An "
+        "independently testable outcome may be a generated criterion or its own generated story "
+        "when no structured requirement states it. Cite the exact excerpt. That citation does not "
+        "cover required_functional_coverage.\n"
+        "- Narrative headings are context, not structured requirements. For eligibility, duplicate "
+        "submission, uncertain or unresolved outcomes, status visibility, customer-service or "
+        "operational visibility, and auditability: when the request states a testable behavior, add "
+        "a generated acceptance criterion on the existing functional story that owns it. When the "
+        "request says the rules, states, permissions, fields, or mechanism are unconfirmed, add one "
+        "bounded discovery task under that story, or an uncertainty, citing the unknown or "
+        "dependency. The task result is whether the fact is available, incomplete, unavailable, or "
+        "not yet verifiable. Do not invent API endpoint paths, payload schemas, idempotency "
+        "support, audit fields, retention periods, source paths, or quotations. Do not add stories "
+        "or tasks merely to increase the count.\n"
+        "- A feature groups stories that implement the capability in its title and description. "
+        "Its provenance must support that capability. A child may use different wording. Move stories "
+        "that implement a different source capability, including authentication, submission, "
+        "integration, or confirmation when the feature excerpt covers only review. Do not add "
+        "features to reach a count. title_origin=source only when the title equals a provenance "
+        "excerpt; a paraphrase is generated.\n"
         "- Treat non-functional requirements as constraints on relevant work, not "
         "automatically as separate technical stories. Never add a user_story whose only "
-        "requirement provenance is a non-functional requirement; attach that path to related "
-        "functional work instead.\n"
+        "requirement provenance is a non-functional requirement; attach that exact path and "
+        "excerpt to related functional work instead. Never merge distinct functional "
+        "requirements onto one user_story.\n"
+        "- Preserve previously covered functional requirements. The coverage snapshot lists "
+        "local_id, json_path, and excerpt pairs that must remain covered by some user_story "
+        "after repair. You may move a path to a different story when splitting overlap, but "
+        "you must not drop a previously covered path. Independent validation will reject a "
+        "repair that loses coverage. Do not merge the initial and repaired trees.\n"
         "- Preserve source provenance, requirement coverage, valid dependencies, scope, "
         "and local_id values for unchanged items.\n"
         "- If implementation detail is unavailable, record a specific uncertainty or "
         "prerequisite rather than inventing architecture, local databases, endpoints, "
         "API contracts, payload formats, or business rules.\n"
+        f"Previously covered functional requirements:\n{snapshot}\n"
         f"Quality findings:\n{listed}\n\n"
         "Previous JSON:\n"
         f"{json.dumps(previous, ensure_ascii=False)}\n"
     )
+
+
+def _repair_task_snapshot(previous: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Bounded task list for the repair prompt. Does not copy tasks into the result."""
+
+    items = previous.get("items")
+    if not isinstance(items, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict) or item.get("type") not in {"task", "subtask"}:
+            continue
+        provenance: list[dict[str, str]] = []
+        for reference in item.get("provenance") or []:
+            if not isinstance(reference, dict):
+                continue
+            provenance.append(
+                {
+                    "json_path": str(reference.get("json_path") or "")[:180],
+                    "excerpt": str(reference.get("excerpt") or "")[:240],
+                }
+            )
+        rows.append(
+            {
+                "local_id": str(item.get("local_id") or "")[:80],
+                "title": str(item.get("title") or "")[:180],
+                "parent_local_id": item.get("parent_local_id"),
+                "provenance": provenance[:4],
+            }
+        )
+        if len(rows) >= 12:
+            break
+    return rows
+
+
+_GROUNDED_TASK_PATH_MARKERS = ("unknown", "open_question", "dependencies", "discovery")
+
+
+def _note_dropped_grounded_tasks(previous: Mapping[str, Any], result: _MaterializeResult) -> None:
+    """Warn when the only valid repair omits a source-backed investigation task.
+
+    The initial tree is not spliced back in. The finding names the omitted task so
+    the gap stays visible after a hard repair that otherwise validates.
+    """
+
+    if result.backlog is None:
+        return
+    kept_paths = {
+        reference.json_path
+        for item in result.backlog.items
+        if item.type is WorkItemType.TASK
+        for reference in item.provenance
+    }
+    for item in previous.get("items") or []:
+        if not isinstance(item, dict) or item.get("type") != "task":
+            continue
+        grounded = [
+            reference
+            for reference in item.get("provenance") or []
+            if isinstance(reference, dict)
+            and any(
+                marker in str(reference.get("json_path") or "")
+                for marker in _GROUNDED_TASK_PATH_MARKERS
+            )
+        ]
+        if not grounded or any(str(reference.get("json_path") or "") in kept_paths for reference in grounded):
+            continue
+        title = str(item.get("title") or "investigation task")
+        result.findings.add(
+            Finding(
+                severity=FindingSeverity.WARNING,
+                code=FindingCode.MISSING_IMPLEMENTATION_DETAIL,
+                message=(
+                    f"Hard repair omitted grounded investigation task {title!r}. "
+                    "The accepted tree was not merged with the initial proposal. "
+                    "Restore an equivalent task only when the same source path and excerpt still apply."
+                ),
+                source_references=[
+                    _source_ref(
+                        str(reference.get("json_path") or ""),
+                        str(reference.get("field_name") or "") or None,
+                        excerpt=str(reference.get("excerpt") or "") or None,
+                    )
+                    for reference in grounded[:2]
+                ],
+            )
+        )
 
 
 def _build_repair_prompt(
@@ -933,11 +1532,44 @@ def _build_repair_prompt(
     errors: list[str],
 ) -> str:
     listed = "\n".join(f"- {error}" for error in errors)
+    tasks = json.dumps(_repair_task_snapshot(previous), ensure_ascii=False, indent=2)
     return (
         f"{original_prompt}\n\n"
         "The previous JSON failed deterministic validation. Return a corrected JSON object "
-        "for the same project facts. Do not mark the output as valid yourself.\n"
+        "for the same project facts. Do not mark the output as valid yourself. This is the only "
+        "repair. Do not drop a functional requirement that the previous JSON already covered. "
+        "A narrative excerpt on $.user_request does not cover a required functional requirement. "
+        "Do not merge the previous tree with a new one; return one corrected tree.\n"
+        "While correcting the validation errors, also apply these rules when the source supports them:\n"
+        "- If a story's acceptance criterion is a compound source sentence that also states another "
+        "story's outcome, replace that criterion with a generated sentence scoped to this story. "
+        "List visibility and renewal-term review are separate outcomes. Keep any cited provenance "
+        "excerpt equal to the full source field, and never mark the scoped sentence as source.\n"
+        "- Attach each in-scope non-functional requirement's exact path and excerpt to an existing "
+        "FR-backed item it constrains. Do not add a story that has only an NFR path.\n"
+        "- Previous tasks are listed below. Preserve each task whose provenance cites an unknown, "
+        "open question, dependency, or discovery fact, or replace it with an equivalent task that "
+        "uses the same json_path and excerpt, a bounded objective, and an unconfirmed result. "
+        "Do not delete that task while fixing titles, story splits, or other errors. A generic "
+        "filler task may be removed. Do not invent endpoints or capabilities to replace it.\n"
+        "- When a labelled section is narrative evidence, cite its exact $.user_request excerpt. "
+        "Represent a testable outcome as a generated criterion or, when no structured requirement "
+        "states it, a generated story. Record an uncertainty or investigation task when the section "
+        "is unconfirmed. Do not invent a json_path or treat the excerpt as functional-requirement coverage.\n"
+        "- title_origin=source only when the title string equals a provenance excerpt. A grounded "
+        "paraphrase is title_origin=generated and keeps the real excerpt. Correct that validation "
+        "error by setting generated. Do not rewrite the title into the full source sentence, and "
+        "do not drop features or investigation tasks to make the origin check pass.\n"
+        "- Keep feature groupings that match a source capability. Do not collapse authentication, "
+        "review, submission, integration, and confirmation into one feature whose provenance excerpt "
+        "covers only one of those outcomes. Different wording between a feature and a child is fine "
+        "when they implement the same capability.\n"
+        "- Preserve each grounded investigation task listed below when its unknown, open question, "
+        "or dependency still applies. Do not add investigation tasks the source does not support, "
+        "and do not require a task under every story.\n"
+        "- Feature provenance should describe the capability its child stories implement.\n"
         f"Validation errors:\n{listed}\n\n"
+        f"Previous tasks to preserve or replace when they are evidence-supported:\n{tasks}\n\n"
         "Previous JSON:\n"
         f"{json.dumps(previous, ensure_ascii=False)}\n"
     )

@@ -213,6 +213,28 @@ def _contains_phrase_tokens(haystack: list[str], phrase: str) -> bool:
     return False
 
 
+_DEPENDENCY_CONTEXT = re.compile(
+    r"(?:after|once|when|using|via|through|following|requires|needed for|later|"
+    r"depends on|in order to|so that|sourced from|retrieved from|comes from|"
+    r"from the|from an|from a|submission to|submitted to|submitting to|submit to|"
+    r"to the|via the|using the|through the|against the|integrate with|"
+    r"integrates with|integration with)\s+(?:\w+\s+){0,6}"
+)
+
+
+def _phrase_is_dependency_context(text: str, phrase: str) -> bool:
+    """True when the phrase appears only as a sequenced dependency, not as owned work."""
+
+    haystack = normalize_source_text(text)
+    needle = normalize_source_text(phrase)
+    if not haystack or not needle or needle not in haystack:
+        return False
+    pattern = _DEPENDENCY_CONTEXT.pattern + re.escape(needle)
+    return re.search(pattern, haystack) is not None and haystack.count(needle) == len(
+        re.findall(pattern, haystack)
+    )
+
+
 def leaked_owned_phrases(owner: Any, other: Any) -> list[str]:
     """Title phrases owned by ``owner`` that appear in ``other``'s description or AC."""
 
@@ -222,7 +244,20 @@ def leaked_owned_phrases(owner: Any, other: Any) -> list[str]:
     body = _story_body_tokens(other)
     if not body:
         return []
-    return [phrase for phrase in sorted(phrases) if _contains_phrase_tokens(body, phrase)]
+    other_text = " ".join(
+        [
+            getattr(other, "description", "") or "",
+            *list(getattr(other, "acceptance_criteria", ()) or ()),
+        ]
+    )
+    leaked: list[str] = []
+    for phrase in sorted(phrases):
+        if not _contains_phrase_tokens(body, phrase):
+            continue
+        if _phrase_is_dependency_context(other_text, phrase):
+            continue
+        leaked.append(phrase)
+    return leaked
 
 
 def description_leaks_owned_action(owner: Any, other: Any) -> bool:
@@ -346,6 +381,7 @@ def record_granularity_findings(
     local_id_by_canonical = _local_id_by_canonical(backlog, proposal)
     by_id = {item.canonical_id: item for item in backlog.items}
     _record_cross_story_findings(list(backlog.items), findings, local_id_by_canonical)
+    _record_feature_child_alignment(list(backlog.items), findings)
     for item in backlog.items:
         if item.type is WorkItemType.USER_STORY:
             _record_story_granularity(item, by_id, findings)
@@ -388,6 +424,142 @@ def _item_local_id(item: Any, local_id_by_canonical: dict[str, str]) -> str:
 
 def _user_stories(items: list[Any]) -> list[Any]:
     return [item for item in items if getattr(item, "type", None) is WorkItemType.USER_STORY]
+
+
+_ALIGNMENT_GENERIC = _GENERIC_CONTEXT_WORDS | {
+    "data",
+    "information",
+    "item",
+    "items",
+    "policies",
+    "policy",
+    "record",
+    "records",
+    "request",
+    "requests",
+    "service",
+    "services",
+    "system",
+    "systems",
+}
+
+
+def _stem_token(token: str) -> str:
+    if token.endswith("ies") and len(token) > 5:
+        return token[:-3] + "y"
+    if token.endswith("s") and not token.endswith("ss") and len(token) > 4:
+        return token[:-1]
+    return token
+
+
+def _alignment_tokens(text: str) -> set[str]:
+    stemmed: set[str] = set()
+    for raw in normalize_source_text(text).split():
+        token = _stem_token(raw.strip(".,;:!?\"'`()[]{}"))
+        if len(token) >= 4 and token not in _ALIGNMENT_GENERIC:
+            stemmed.add(token)
+    return stemmed
+
+
+def _alignment_tokens_related(left: str, right: str) -> bool:
+    if left == right:
+        return True
+    short, long = (left, right) if len(left) <= len(right) else (right, left)
+    if not long.startswith(short):
+        return False
+    extra = long[len(short) :]
+    if extra == "al" and len(short) >= 5:
+        return True
+    if extra in {"ing", "ed", "ion", "tion", "ation", "es"} and len(short) >= 6:
+        return True
+    if extra == "s" and len(short) >= 4:
+        return True
+    return False
+
+
+def _alignment_sets_share_term(left: set[str], right: set[str]) -> bool:
+    if left & right:
+        return True
+    return any(_alignment_tokens_related(token, other) for token in left for other in right)
+
+
+def _child_text(child: Any) -> str:
+    return f"{getattr(child, 'title', '')} {getattr(child, 'description', '')}"
+
+
+def _record_feature_child_alignment(items: list[Any], findings: Any) -> None:
+    """Warn when a feature's stated scope or provenance does not fit its children.
+
+    Coherence uses the feature title and description. Provenance is checked
+    separately so a narrow source excerpt is not treated as the whole group.
+    Token overlap is a review heuristic, not a hard failure or a feature-count rule.
+    """
+
+    by_id = {item.canonical_id: item for item in items}
+    for feature in items:
+        if getattr(feature, "type", None) is not WorkItemType.FEATURE:
+            continue
+        children = [
+            by_id[child_id]
+            for child_id in getattr(feature, "child_ids", ()) or ()
+            if child_id in by_id and by_id[child_id].type is WorkItemType.USER_STORY
+        ]
+        if not children:
+            continue
+        excerpt = ""
+        for reference in list(getattr(feature, "provenance", ()) or ()):
+            excerpt = getattr(reference, "excerpt", None) or ""
+            if excerpt:
+                break
+        claimed = _alignment_tokens(
+            f"{getattr(feature, 'title', '')} {getattr(feature, 'description', '')}"
+        )
+        provenance_tokens = _alignment_tokens(excerpt)
+        if len(claimed) < 2 and len(provenance_tokens) >= 2:
+            claimed = provenance_tokens
+        if len(claimed) < 2:
+            continue
+        matched = [
+            child
+            for child in children
+            if _alignment_sets_share_term(claimed, _alignment_tokens(_child_text(child)))
+        ]
+        provenance_matched = [
+            child
+            for child in children
+            if provenance_tokens
+            and _alignment_sets_share_term(provenance_tokens, _alignment_tokens(_child_text(child)))
+        ]
+        coherent = len(matched) / len(children) >= 0.5
+        provenance_grounded = not provenance_tokens or bool(provenance_matched)
+        if coherent and provenance_grounded:
+            continue
+        outside = [child for child in children if child not in matched]
+        outside_titles = ", ".join(repr(child.title) for child in outside[:4])
+        if not provenance_grounded:
+            detail = (
+                "provenance does not share distinctive terms with any child user story. "
+                "Cite a source capability the children implement, or move the children."
+            )
+        else:
+            detail = (
+                f"title and description share distinctive terms with {len(matched)} of "
+                f"{len(children)} child stories. Stories outside that scope: {outside_titles}. "
+                "Move those stories to a feature whose source capability covers them. A broad "
+                "feature may keep a child that does not repeat the same words."
+            )
+        findings.add(
+            Finding(
+                severity=FindingSeverity.WARNING,
+                code=FindingCode.FEATURE_CHILD_MISALIGNMENT,
+                message=(
+                    f"Feature {feature.title!r} {detail} This is a heuristic, not a hard "
+                    "failure and not a requirement to add extra features."
+                ),
+                canonical_ids=[feature.canonical_id, *[child.canonical_id for child in children]],
+                source_references=list(getattr(feature, "provenance", ()) or ()),
+            )
+        )
 
 
 def _record_cross_story_findings(
@@ -521,8 +693,10 @@ def _duplicate_criterion_message(
     return (
         f"Stories {labels} share the same acceptance criterion via {overlap}. "
         f"Canonical IDs: {', '.join(ids)}. "
-        "Remediation: keep this criterion on the one story whose outcome it verifies; "
-        "remove the duplicate from the other story or stories."
+        "Remediation: keep this criterion on the one story whose outcome it verifies. "
+        "If the source criterion concatenates independently owned outcomes, replace the "
+        "shared copy with generated criteria scoped to each story and never mark that "
+        "generated text as a verbatim source quotation."
     )
 
 
@@ -662,8 +836,9 @@ def _record_story_granularity(item: Any, by_id: dict[str, Any], findings: Any) -
                 code=FindingCode.MISSING_IMPLEMENTATION_DETAIL,
                 message=(
                     "Story looks like it needs concrete implementation or verification tasks, "
-                    "but has none. Record uncertainty instead of inventing filler if the source "
-                    "does not say how to build it."
+                    "but has none. If a source unknown or dependency names a checkable fact, "
+                    "add an investigation task that cites it and records an unconfirmed result. "
+                    "Otherwise record uncertainty instead of inventing filler."
                 ),
                 canonical_ids=[item.canonical_id],
                 source_references=list(item.provenance),

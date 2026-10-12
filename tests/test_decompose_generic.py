@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import copy
+
 import pytest
 
-from backlog_agent.backlog.decompose import decompose_backlog
+from backlog_agent.backlog.decompose import _build_prompt, decompose_backlog
+from backlog_agent.source import UnsupportedInputError, load_project_source
 from backlog_agent.backlog.models import WorkItemType
 from backlog_agent.contracts.copilot_workflow_response_v1 import CopilotWorkflowResponseV1
 from backlog_agent.findings.models import FindingCode
 from backlog_agent.llm.exceptions import DecompositionValidationError
 from backlog_agent.llm.mock import MockProvider
-from backlog_agent.source import UnsupportedInputError
 from tests.copilot_envelopes import library_holds_envelope, warehouse_picking_envelope
 
 
@@ -300,7 +302,7 @@ def test_library_project_covers_frs_atomic_story_and_multi_task_story() -> None:
 def test_related_story_without_nfr_path_is_not_coverage() -> None:
     envelope = CopilotWorkflowResponseV1.model_validate(library_holds_envelope())
     proposal = _library_proposal(trace_nfr=False)
-    _backlog, findings = decompose_backlog(envelope, MockProvider(proposal))
+    _backlog, findings = decompose_backlog(envelope, MockProvider(proposal), repair=False)
 
     uncovered = [
         item for item in findings.items if item.code is FindingCode.UNCOVERED_NON_FUNCTIONAL_REQUIREMENT
@@ -382,3 +384,424 @@ def test_out_of_scope_item_is_rejected_on_non_insurance_project() -> None:
 def test_decompose_rejects_unsupported_input() -> None:
     with pytest.raises(UnsupportedInputError):
         decompose_backlog({"random": True}, MockProvider(_library_proposal()))
+
+
+def test_invented_user_request_fr_path_is_rejected() -> None:
+    envelope = CopilotWorkflowResponseV1.model_validate(library_holds_envelope())
+    proposal = _library_proposal()
+    story = next(item for item in proposal["items"] if item["local_id"] == "story-search")
+    story["provenance"].append(
+        _src("$.user_request.FR-04", "user_request", "Customer Authentication")
+    )
+    with pytest.raises(DecompositionValidationError) as exc:
+        decompose_backlog(envelope, MockProvider(proposal), repair=False)
+    assert any("does not resolve" in error for error in exc.value.errors)
+
+
+def test_user_request_subsection_excerpt_rewrites_to_full_field() -> None:
+    payload = library_holds_envelope()
+    envelope = CopilotWorkflowResponseV1.model_validate(payload)
+    proposal = _library_proposal()
+    epic = next(item for item in proposal["items"] if item["local_id"] == "epic-1")
+    epic["provenance"][0]["excerpt"] = "### FR-04: Customer Authentication"
+    backlog, _findings = decompose_backlog(envelope, MockProvider(proposal), repair=False)
+    stored = next(item for item in backlog.items if item.type is WorkItemType.EPIC)
+    assert stored.provenance[0].excerpt == payload["user_request"]
+    assert "FR-04" not in (stored.provenance[0].excerpt or "")
+
+
+def test_policy_listing_heading_matches_review_policies_story() -> None:
+    payload = library_holds_envelope()
+    payload["user_request"] += "\n\n### FR-02: Policy Listing\n"
+    envelope = CopilotWorkflowResponseV1.model_validate(payload)
+    proposal = _library_proposal()
+    search = next(item for item in proposal["items"] if item["local_id"] == "story-search")
+    search["title"] = "Review Personal Policies"
+    search["title_origin"] = "generated"
+    search["description"] = "A member reviews personal policies and inspects the listed coverage."
+    search["acceptance_criteria"] = ["A member can review the policies on the account."]
+    search["acceptance_criteria_origins"] = ["generated"]
+    _backlog, findings = decompose_backlog(envelope, MockProvider(proposal), repair=False)
+    assert not any(
+        item.code is FindingCode.UNCOVERED_REQUEST_OUTCOME and "Policy Listing" in item.message
+        for item in findings.items
+    )
+
+
+def test_repeated_uncertainty_notes_collapse_and_distinct_notes_remain() -> None:
+    proposal = _library_proposal()
+    repeated = "Availability and completeness of the catalog vendor API documentation"
+    proposal["uncertainties"] = [
+        "Identity provider for member login is not specified.",
+        repeated,
+        repeated + " remain unconfirmed.",
+        "Pickup notice timing is unspecified.",
+    ]
+    search = next(item for item in proposal["items"] if item["local_id"] == "story-search")
+    search["uncertainties"] = [repeated]
+    _backlog, findings = decompose_backlog(
+        CopilotWorkflowResponseV1.model_validate(library_holds_envelope()),
+        MockProvider(proposal),
+        repair=False,
+    )
+    ambiguous = [
+        item.message
+        for item in findings.items
+        if item.code is FindingCode.AMBIGUOUS_DECOMPOSITION
+    ]
+    assert sum(repeated in message for message in ambiguous) == 1
+    assert any("Pickup notice timing" in message for message in ambiguous)
+    assert any("Identity provider" in message for message in ambiguous)
+
+
+def test_distinct_uncovered_headings_are_reported_separately() -> None:
+    payload = library_holds_envelope()
+    payload["user_request"] += (
+        "\n\n### FR-90: Completely Unique Widget Enumeration\n"
+        "### NFR-91: Unverified Orbital Calibration\n"
+    )
+    envelope = CopilotWorkflowResponseV1.model_validate(payload)
+    _backlog, findings = decompose_backlog(
+        envelope, MockProvider(_library_proposal()), repair=False
+    )
+    warnings = [
+        item.message
+        for item in findings.items
+        if item.code is FindingCode.UNCOVERED_REQUEST_OUTCOME
+    ]
+    assert any("FR-90" in message for message in warnings)
+    assert any("NFR-91" in message for message in warnings)
+
+
+def test_labeled_heading_warns_when_tokens_are_absent() -> None:
+    payload = library_holds_envelope()
+    payload["user_request"] = (
+        payload["user_request"]
+        + "\n\n### FR-99: Completely Unique Widget Enumeration\n"
+        + "The portal must expose a widget enumeration listed only in this heading.\n"
+        + "### NFR-99: Launch within 6 weeks pending feasibility\n"
+    )
+    envelope = CopilotWorkflowResponseV1.model_validate(payload)
+    _backlog, findings = decompose_backlog(
+        envelope, MockProvider(_library_proposal()), repair=False
+    )
+    warnings = [
+        item for item in findings.items if item.code is FindingCode.UNCOVERED_REQUEST_OUTCOME
+    ]
+    assert len(warnings) == 1
+    assert "FR-99" in warnings[0].message
+    assert "heuristic" in warnings[0].message.lower()
+    assert "does not prove" in warnings[0].message.lower()
+    assert warnings[0].source_references[0].json_path == "$.user_request"
+    excerpt = warnings[0].source_references[0].excerpt or ""
+    assert excerpt.startswith("### FR-99:")
+    assert excerpt in payload["user_request"]
+    assert "$.user_request.FR-99" not in excerpt
+
+
+def test_labeled_heading_skips_outcomes_already_in_structured_facts() -> None:
+    payload = library_holds_envelope()
+    payload["user_request"] = (
+        payload["user_request"] + "\n\n### FR-01: Catalog Search\nMembers search holdings.\n"
+    )
+    envelope = CopilotWorkflowResponseV1.model_validate(payload)
+    _backlog, findings = decompose_backlog(
+        envelope, MockProvider(_library_proposal()), repair=False
+    )
+    assert not any(
+        item.code is FindingCode.UNCOVERED_REQUEST_OUTCOME for item in findings.items
+    )
+
+
+def test_generation_prompt_covers_ownership_discovery_and_narrative_limits() -> None:
+    prompt = _build_prompt(load_project_source(library_holds_envelope())).lower()
+    assert "merely to obtain a provenance" in prompt
+    assert "never invent paths" in prompt
+    assert "zero tasks is valid" in prompt
+    assert "confirming whether api documentation" in prompt
+    assert "not confirmed" in prompt
+    assert "source of truth" in prompt
+    assert "list visibility" in prompt
+    assert "do not create extra features" in prompt
+    assert "do not put that source path on both stories" in prompt
+    assert "auditability" in prompt
+    assert "implement backend" in prompt
+    assert "labeled_request_outcomes" in prompt or "labeled fr/nfr" in prompt
+
+
+def test_authentication_heading_is_covered_by_story_wording_or_feature_title() -> None:
+    payload = library_holds_envelope()
+    payload["user_request"] += "\n\n### FR-01: Customer Authentication\n"
+    envelope = CopilotWorkflowResponseV1.model_validate(payload)
+    by_story = _library_proposal()
+    search = next(item for item in by_story["items"] if item["local_id"] == "story-search")
+    search["description"] = (
+        "A signed-in member can authenticate and then search holdings by title or author."
+    )
+    _backlog, findings = decompose_backlog(envelope, MockProvider(by_story), repair=False)
+    assert not any(
+        item.code is FindingCode.UNCOVERED_REQUEST_OUTCOME and "FR-01" in item.message
+        for item in findings.items
+    )
+
+    by_feature = _library_proposal()
+    feature = next(item for item in by_feature["items"] if item["local_id"] == "feat-search")
+    feature["title"] = "Customer Authentication"
+    feature["title_origin"] = "generated"
+    _backlog, feature_findings = decompose_backlog(envelope, MockProvider(by_feature), repair=False)
+    assert not any(
+        item.code is FindingCode.UNCOVERED_REQUEST_OUTCOME and "FR-01" in item.message
+        for item in feature_findings.items
+    )
+
+
+def test_scoped_list_criterion_does_not_claim_term_review() -> None:
+    payload = library_holds_envelope()
+    compound = "A member can view holdings and review lending terms."
+    payload["requirements"]["acceptance_criteria"] = [compound]
+    envelope = CopilotWorkflowResponseV1.model_validate(payload)
+    proposal = _library_proposal()
+    search = next(item for item in proposal["items"] if item["local_id"] == "story-search")
+    search["title"] = "View Catalog Holdings"
+    search["title_origin"] = "generated"
+    search["acceptance_criteria"] = ["A member can view the listed holdings."]
+    search["acceptance_criteria_origins"] = ["generated"]
+    search["provenance"].append(_src("$.requirements.acceptance_criteria[0]", "acceptance_criteria", compound))
+    terms = next(item for item in proposal["items"] if item["local_id"] == "story-notify")
+    terms["title"] = "Review Lending Terms"
+    terms["title_origin"] = "generated"
+    terms["description"] = "A member reviews lending terms before requesting a copy."
+    terms["acceptance_criteria"] = ["A member can review the lending terms before requesting a copy."]
+    terms["acceptance_criteria_origins"] = ["generated"]
+    backlog, findings = decompose_backlog(envelope, MockProvider(proposal), repair=False)
+    stored = next(item for item in backlog.items if item.title == "View Catalog Holdings")
+    assert stored.acceptance_criteria == ["A member can view the listed holdings."]
+    assert compound not in stored.acceptance_criteria
+    assert any(reference.excerpt == compound for reference in stored.provenance)
+    generated = [
+        item
+        for item in findings.items
+        if item.code is FindingCode.GENERATED_CONTENT and stored.canonical_id in item.canonical_ids
+    ]
+    assert generated
+    assert "acceptance_criteria" in generated[0].message
+    assert not any(item.code is FindingCode.OVERLAPPING_STORY_RESPONSIBILITY for item in findings.items)
+    assert not any(item.code is FindingCode.DUPLICATE_ACCEPTANCE_CRITERION for item in findings.items)
+
+
+def test_hard_repair_keeps_equivalent_investigation_task() -> None:
+    payload = library_holds_envelope()
+    dependency = payload["delivery_plan"]["dependencies"][0]
+    initial = _library_proposal()
+    next(item for item in initial["items"] if item["local_id"] == "story-search")["description"] = ""
+    task = _item(
+        "task-docs",
+        "task",
+        "Confirm whether bibliographic vendor documentation is available",
+        parent="story-hold",
+        provenance=[_src("$.delivery_plan.dependencies[0]", "dependencies", dependency)],
+        title_origin="generated",
+    )
+    initial["items"].append(task)
+    repaired = _library_proposal()
+    repaired["items"].append(copy.deepcopy(task))
+    provider = MockProvider(responses=[initial, repaired])
+    backlog, findings = decompose_backlog(
+        CopilotWorkflowResponseV1.model_validate(payload), provider
+    )
+    prompt = provider.calls[1][0]
+    assert len(provider.calls) == 2
+    assert "task-docs" in prompt
+    assert "bibliographic vendor documentation" in prompt
+    assert "$.delivery_plan.dependencies[0]" in prompt
+    assert "previous tasks to preserve" in prompt.lower()
+    assert "do not merge the previous tree" in prompt.lower()
+    assert [call.kind for call in findings.llm_calls] == ["initial", "hard_repair"]
+    assert findings.llm_calls[1].accepted is True
+    assert any("documentation is available" in item.title for item in backlog.items)
+    assert not any("omitted grounded investigation task" in item.message for item in findings.items)
+
+
+def test_invalid_title_origin_triggers_one_hard_repair_that_keeps_coverage() -> None:
+    payload = library_holds_envelope()
+    dependency = payload["delivery_plan"]["dependencies"][0]
+    initial = _library_proposal()
+    search = next(item for item in initial["items"] if item["local_id"] == "story-search")
+    search["title"] = "Unrelated quarterly billing export"
+    search["title_origin"] = "source"
+    task = _item(
+        "task-docs",
+        "task",
+        "Confirm whether bibliographic vendor documentation is available",
+        parent="story-hold",
+        provenance=[_src("$.delivery_plan.dependencies[0]", "dependencies", dependency)],
+        title_origin="generated",
+    )
+    initial["items"].append(task)
+    repaired = _library_proposal()
+    repaired["items"].append(copy.deepcopy(task))
+    provider = MockProvider(responses=[initial, repaired, _library_proposal()])
+    backlog, findings = decompose_backlog(
+        CopilotWorkflowResponseV1.model_validate(payload), provider
+    )
+    prompt = provider.calls[1][0]
+    assert len(provider.calls) == 2
+    assert "actionable quality findings" not in prompt
+    assert "title_origin=source only when the title string equals" in prompt
+    assert "do not require a task under every story" in prompt.lower()
+    assert "do not add investigation tasks the source does not support" in prompt.lower()
+    assert [call.kind for call in findings.llm_calls] == ["initial", "hard_repair"]
+    assert findings.llm_calls[0].validation_passed is False
+    assert findings.llm_calls[0].accepted is False
+    assert findings.llm_calls[1].validation_passed is True
+    assert findings.llm_calls[1].accepted is True
+    covered = {
+        reference.json_path
+        for item in backlog.items
+        for reference in item.provenance
+        if reference.json_path.startswith("$.requirements.functional_requirements")
+    }
+    assert covered == {f"$.requirements.functional_requirements[{index}]" for index in range(3)}
+    assert any("documentation is available" in item.title for item in backlog.items)
+
+
+def test_hard_repair_that_loses_structured_fr_coverage_is_rejected() -> None:
+    payload = library_holds_envelope()
+    initial = _library_proposal()
+    search = next(item for item in initial["items"] if item["local_id"] == "story-search")
+    search["title"] = "Unrelated quarterly billing export"
+    search["title_origin"] = "source"
+    provider = MockProvider(responses=[initial, _library_proposal(cover_notify=False)])
+    with pytest.raises(DecompositionValidationError) as exc:
+        decompose_backlog(CopilotWorkflowResponseV1.model_validate(payload), provider)
+    assert len(provider.calls) == 2
+    assert "does not cover a required functional requirement" in provider.calls[1][0]
+    assert [call.kind for call in exc.value.findings.llm_calls] == ["initial", "hard_repair"]
+    assert exc.value.findings.llm_calls[1].accepted is False
+    assert exc.value.findings.llm_calls[1].validation_passed is False
+
+
+def test_hard_repair_does_not_splice_back_a_dropped_task() -> None:
+    payload = library_holds_envelope()
+    dependency = payload["delivery_plan"]["dependencies"][0]
+    initial = _library_proposal()
+    next(item for item in initial["items"] if item["local_id"] == "story-search")["description"] = ""
+    initial["items"].append(
+        _item(
+            "task-docs",
+            "task",
+            "Confirm whether bibliographic vendor documentation is available",
+            parent="story-hold",
+            provenance=[_src("$.delivery_plan.dependencies[0]", "dependencies", dependency)],
+            title_origin="generated",
+        )
+    )
+    provider = MockProvider(responses=[initial, _library_proposal()])
+    backlog, findings = decompose_backlog(
+        CopilotWorkflowResponseV1.model_validate(payload), provider
+    )
+    assert len(provider.calls) == 2
+    assert findings.llm_calls[1].accepted is True
+    assert not any("documentation is available" in item.title for item in backlog.items)
+    omitted = [
+        item
+        for item in findings.items
+        if item.code is FindingCode.MISSING_IMPLEMENTATION_DETAIL
+        and "omitted grounded investigation task" in item.message
+    ]
+    assert len(omitted) == 1
+    assert "bibliographic vendor documentation" in omitted[0].message
+
+
+def test_generic_filler_tasks_are_rejected() -> None:
+    envelope = CopilotWorkflowResponseV1.model_validate(library_holds_envelope())
+    proposal = _library_proposal()
+    proposal["items"].append(
+        _item(
+            "task-filler",
+            "task",
+            "Implement backend",
+            parent="story-hold",
+            provenance=[
+                _src(
+                    "$.sow.in_scope[1]",
+                    "in_scope",
+                    library_holds_envelope()["sow"]["in_scope"][1],
+                )
+            ],
+            title_origin="generated",
+        )
+    )
+    with pytest.raises(DecompositionValidationError) as exc:
+        decompose_backlog(envelope, MockProvider(proposal), repair=False)
+    assert any("generic or filler" in error for error in exc.value.errors)
+
+
+def test_grounded_discovery_task_from_blocking_unknown_is_accepted() -> None:
+    payload = library_holds_envelope()
+    envelope = CopilotWorkflowResponseV1.model_validate(payload)
+    proposal = _library_proposal()
+    proposal["items"].append(
+        _item(
+            "task-discover-marc",
+            "task",
+            "Confirm whether bibliographic vendor MARC feed documentation is available",
+            parent="story-hold",
+            provenance=[
+                _src(
+                    "$.delivery_plan.dependencies[0]",
+                    "dependencies",
+                    payload["delivery_plan"]["dependencies"][0],
+                )
+            ],
+            title_origin="generated",
+        )
+    )
+    backlog, _findings = decompose_backlog(envelope, MockProvider(proposal), repair=False)
+    assert any(
+        "MARC feed documentation" in item.title for item in backlog.items
+    )
+
+
+def test_nfr_counts_only_when_its_path_is_on_an_item() -> None:
+    payload = library_holds_envelope()
+    constraint = "The catalog service must remain the authoritative source of truth for holdings."
+    payload["requirements"]["non_functional_requirements"].append(constraint)
+    envelope = CopilotWorkflowResponseV1.model_validate(payload)
+    missing = _library_proposal()
+    _backlog, uncovered_findings = decompose_backlog(envelope, MockProvider(missing), repair=False)
+    uncovered = [
+        item
+        for item in uncovered_findings.items
+        if item.code is FindingCode.UNCOVERED_NON_FUNCTIONAL_REQUIREMENT
+        and item.source_references
+        and item.source_references[0].excerpt == constraint
+    ]
+    assert len(uncovered) == 1
+
+    attached = _library_proposal()
+    search = next(item for item in attached["items"] if item["local_id"] == "story-search")
+    search["provenance"].append(
+        _src(
+            "$.requirements.non_functional_requirements[2]",
+            "non_functional_requirements",
+            constraint,
+        )
+    )
+    _covered, covered_findings = decompose_backlog(envelope, MockProvider(attached), repair=False)
+    assert not any(
+        item.code is FindingCode.UNCOVERED_NON_FUNCTIONAL_REQUIREMENT
+        and item.source_references
+        and item.source_references[0].excerpt == constraint
+        for item in covered_findings.items
+    )
+
+
+def test_unverifiable_unknowns_may_yield_zero_tasks() -> None:
+    envelope = CopilotWorkflowResponseV1.model_validate(library_holds_envelope())
+    proposal = _library_proposal()
+    proposal["items"] = [item for item in proposal["items"] if item["type"] != "task"]
+    backlog, findings = decompose_backlog(envelope, MockProvider(proposal), repair=False)
+    assert not any(item.type is WorkItemType.TASK for item in backlog.items)
+    assert any(item.code is FindingCode.UNRESOLVED_PREREQUISITE for item in findings.items)
+    assert not any(item.code is FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT for item in findings.items)

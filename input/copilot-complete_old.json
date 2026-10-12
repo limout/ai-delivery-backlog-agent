@@ -1,0 +1,669 @@
+{
+    "run_id": "3b35f0ae-3da5-400a-985e-1360b61617ea",
+    "status": "COMPLETE",
+    "workflow_status": "COMPLETE",
+    "current_stage": "complete",
+    "awaiting_customer": false,
+    "user_request": "# Delivery Request: Insurance Policy Renewal Portal MVP\n\n## 1. Business Context\n\nWe are a mid-sized insurance company offering personal motor and home insurance. Currently, customers renew policies by contacting our call center or sending emails to their insurance agent. This creates unnecessary manual work, delays, and a poor customer experience.\n\nWe want to build a customer self-service web portal that allows eligible customers to review and renew their existing insurance policies online.\n\nThe goal is to launch a secure MVP that reduces manual renewal processing and makes the renewal journey faster and more transparent.\n\n## 2. Business Objectives\n\n- Allow eligible customers to complete a policy renewal without contacting the call center.\n- Reduce manual work for customer service employees.\n- Clearly display policy details, premium, and coverage before the customer confirms a renewal.\n- Provide customers with confirmation that their renewal request has been completed.\n- Establish a foundation for adding more insurance products in the future.\n\n## 3. Target Users\n\n**Existing insurance customers**\n- Need to access their policies securely.\n- Want to review renewal terms and complete a renewal online.\n- Need confirmation and access to their updated policy information.\n\n**Customer service employees**\n- Need to help customers who cannot complete a renewal online.\n- Need visibility into renewal requests and their processing status.\n\n**Operations team**\n- Needs a reliable process for handling renewal requests and exceptions.\n\n## 4. Functional Scope\n\n### Customer access\n- Customers can sign in securely.\n- Customers can view their existing policies and identify which policies are eligible for renewal.\n- Customers can view policy details, current coverage, premium, and renewal terms.\n\n### Renewal journey\n- Customers can start a renewal for an eligible policy.\n- The system validates eligibility before allowing the customer to proceed.\n- Customers can review the proposed premium and coverage before confirming.\n- Customers must explicitly confirm the renewal before the request is submitted.\n- The system prevents duplicate submissions for the same policy renewal.\n- If a policy is not eligible, the customer receives a clear explanation and instructions on what to do next.\n\n### Confirmation and policy information\n- Customers receive an on-screen confirmation after a successful renewal.\n- A confirmation email is sent after the renewal is successfully processed.\n- Customers can view the updated policy information and renewal status.\n\n### Operational visibility\n- Customer service employees can search for a customer or policy and view its renewal status.\n- Employees can identify renewals that failed or require manual intervention.\n- Failed renewal attempts must not be presented to customers as successful renewals.\n\n## 5. Existing Systems and Integrations\n\nThe company already has:\n- A policy administration system that is the source of truth for policies, eligibility, premiums, and coverage.\n- An identity provider supporting customer authentication.\n- An email delivery service.\n- An internal customer service application.\n\nThe policy administration system exposes APIs for retrieving policy information and submitting renewal requests, but its documentation and sandbox availability have not yet been confirmed.\n\nThe customer service application does not currently provide a dedicated renewal management workflow.\n\nDo not assume that any undocumented API, data field, or integration capability is available.\n\n## 6. Non-Functional Requirements\n\n- Protect customer and policy information from unauthorized access.\n- Enforce authorization so customers can access only their own policies.\n- Encrypt sensitive information in transit.\n- Maintain an audit trail of renewal submissions and their outcomes.\n- Handle timeouts and temporary integration failures without creating duplicate renewals.\n- Provide clear error messages and recovery guidance.\n- Design the portal to support future expansion to additional insurance products.\n\nSpecific performance targets, availability commitments, retention periods, and regulatory requirements still need confirmation.\n\n## 7. MVP Boundaries\n\n**In scope**\n- Responsive web portal for existing customers.\n- Secure customer access.\n- Policy listing and renewal eligibility.\n- Policy and renewal-term review.\n- Renewal confirmation and submission.\n- Customer confirmation email.\n- Basic customer service visibility into renewal status.\n- Error handling and auditability for renewal processing.\n\n**Out of scope**\n- New insurance policy purchases.\n- Claims submission or claims adjudication.\n- Automated underwriting or risk scoring.\n- Mobile native applications.\n- Replacing the existing policy administration system.\n- Rebuilding the company's identity provider.\n- Advanced analytics and personalized insurance recommendations.\n\n## 8. Delivery Constraints and Assumptions\n\n- This is an MVP, not a complete insurance platform.\n- The existing policy administration system remains the source of truth.\n- The project team and technical architecture have not yet been finalized.\n- Integration feasibility must be verified before committing to delivery dates.\n- The customer experience should prioritize a straightforward, accessible renewal journey.\n- Security, authorization, and prevention of duplicate renewals are critical requirements.\n\nThe business would like to launch within approximately 12 weeks, but this is a target rather than an approved commitment. The delivery team must assess feasibility after clarifying integration readiness, scope, and implementation risks.\n\n## 9. Requested Delivery Assessment\n\nPlease produce a complete delivery assessment covering:\n- Clarification questions and material unknowns.\n- Functional and non-functional requirements.\n- Proposed solution and integration approach.\n- Delivery phases, workstreams, milestones, and dependencies.\n- Estimated effort and timeline with explicit assumptions and confidence.\n- Major delivery risks and mitigations.\n- MVP scope, exclusions, and acceptance approach.\n- A proposal and statement of work consistent with the available evidence.\n\nDo not invent confirmed API capabilities, regulatory obligations, staffing commitments, or delivery guarantees. Clearly distinguish known facts, assumptions, unresolved questions, and recommendations.",
+    "discovery": {
+      "problem": "Customers currently renew personal motor and home insurance policies through manual interactions via call center or email, leading to unnecessary manual work, delays, and a poor customer experience.",
+      "business_goal": "Launch a secure MVP web portal that allows eligible customers to review and renew existing insurance policies online, reducing manual renewal processing and making the journey faster and more transparent.",
+      "users": [
+        "Existing insurance customers",
+        "Customer service employees",
+        "Operations team"
+      ],
+      "stakeholders": [
+        "Insurance company management",
+        "Customer service department",
+        "Operations team"
+      ],
+      "existing_systems": [
+        "Policy administration system",
+        "Identity provider",
+        "Email delivery service",
+        "Internal customer service application"
+      ],
+      "constraints": [
+        "Must be an MVP rather than a complete insurance platform",
+        "Existing policy administration system remains the source of truth",
+        "Target launch within approximately 12 weeks pending feasibility assessment",
+        "Target delivery timeline: 12 weeks"
+      ],
+      "assumptions": [
+        "The existing policy administration system exposes APIs for retrieving policy information and submitting renewal requests",
+        "The existing identity provider supports customer authentication",
+        "The existing email delivery service can be utilized for confirmation emails",
+        "The project team and technical architecture have not yet been finalized"
+      ],
+      "unknowns": [
+        "Policy administration system API documentation and sandbox availability have not yet been confirmed",
+        "Specific performance targets, availability commitments, retention periods, and regulatory requirements are still unconfirmed",
+        "Delivery team staffing, composition, and technical architecture are not finalized",
+        "Exact integration feasibility with the policy administration system has not been verified"
+      ],
+      "clarification_questions": [
+        "Are the policy administration system API documentation and sandbox environment now accessible for team review?",
+        "What specific regulatory compliance standards (e.g., data privacy, financial regulations) apply to the renewal portal?",
+        "What are the expected peak traffic volumes and availability requirements for the MVP?",
+        "What specific updates or data fields are required within the internal customer service application for renewal status visibility?",
+        "Are there defined UI/UX brand guidelines or existing design systems the web portal must adhere to?"
+      ]
+    },
+    "requirements": {
+      "functional_requirements": [
+        "The system shall allow eligible customers to review existing personal motor and home insurance policies online via a secure web portal.",
+        "The system shall allow eligible customers to submit renewal requests for existing insurance policies online.",
+        "The system shall retrieve policy information from and submit renewal requests to the existing policy administration system.",
+        "The system shall authenticate customers using the existing identity provider.",
+        "The system shall utilize the existing email delivery service to send confirmation emails."
+      ],
+      "non_functional_requirements": [
+        "The web portal must be delivered as a secure MVP within approximately 12 weeks pending feasibility assessment.",
+        "The existing policy administration system must remain the source of truth."
+      ],
+      "acceptance_criteria": [
+        "An eligible customer can successfully log into the web portal using the existing identity provider.",
+        "An eligible customer can view their existing personal motor and home insurance policy details within the web portal.",
+        "An eligible customer can submit a policy renewal request through the web portal and trigger a confirmation email via the email delivery service."
+      ],
+      "open_questions": [
+        "Are the policy administration system API documentation and sandbox environment now accessible for team review?",
+        "What specific regulatory compliance standards apply to the renewal portal?",
+        "What are the expected peak traffic volumes and availability requirements for the MVP?",
+        "What specific updates or data fields are required within the internal customer service application for renewal status visibility?",
+        "Are there defined UI/UX brand guidelines or existing design systems the web portal must adhere to?"
+      ],
+      "contradictions": [
+        "The constraints state a target launch within approximately 12 weeks pending feasibility assessment while also noting that integration feasibility with the policy administration system and API documentation have not yet been verified, which contradicts a firm delivery timeline."
+      ]
+    },
+    "validation": {
+      "status": "READY",
+      "reasons": [
+        "The project has a clear business goal, well-defined MVP scope, and established functional requirements that allow preliminary solution shaping and delivery planning to proceed using reasonable assumptions.",
+        "Unresolved technical unknowns regarding the policy administration system APIs and sandbox availability can be handled as technical dependencies and investigation items during the initial shaping phase rather than blocking customer decisions.",
+        "Performance targets, regulatory standards, and integration specifics can be carried forward as non-blocking questions or addressed through standard assumptions for an MVP."
+      ],
+      "questions": [],
+      "blocking_questions": [],
+      "non_blocking_questions": [
+        "Are the policy administration system API documentation and sandbox environment now accessible for team review?",
+        "What specific regulatory compliance standards apply to the renewal portal?",
+        "What are the expected peak traffic volumes and availability requirements for the MVP?",
+        "What specific updates or data fields are required within the internal customer service application for renewal status visibility?",
+        "Are there defined UI/UX brand guidelines or existing design systems the web portal must adhere to?",
+        "Policy administration system API documentation and sandbox availability have not yet been confirmed",
+        "Specific performance targets, availability commitments, retention periods, and regulatory requirements are still unconfirmed",
+        "Delivery team staffing, composition, and technical architecture are not finalized",
+        "Exact integration feasibility with the policy administration system has not been verified",
+        "What are the expected user roles and permissions?"
+      ],
+      "estimable": true,
+      "missing_evidence": []
+    },
+    "clarification_questions": [],
+    "blocking_questions": [],
+    "non_blocking_questions": [
+      {
+        "question": "Are the policy administration system API documentation and sandbox environment now accessible for team review?",
+        "priority": "RECOMMENDED",
+        "reason": "",
+        "blocks_workflow": false
+      },
+      {
+        "question": "What specific regulatory compliance standards apply to the renewal portal?",
+        "priority": "RECOMMENDED",
+        "reason": "",
+        "blocks_workflow": false
+      },
+      {
+        "question": "What are the expected peak traffic volumes and availability requirements for the MVP?",
+        "priority": "RECOMMENDED",
+        "reason": "",
+        "blocks_workflow": false
+      },
+      {
+        "question": "What specific updates or data fields are required within the internal customer service application for renewal status visibility?",
+        "priority": "RECOMMENDED",
+        "reason": "",
+        "blocks_workflow": false
+      },
+      {
+        "question": "Are there defined UI/UX brand guidelines or existing design systems the web portal must adhere to?",
+        "priority": "RECOMMENDED",
+        "reason": "",
+        "blocks_workflow": false
+      },
+      {
+        "question": "Policy administration system API documentation and sandbox availability have not yet been confirmed",
+        "priority": "RECOMMENDED",
+        "reason": "",
+        "blocks_workflow": false
+      },
+      {
+        "question": "Specific performance targets, availability commitments, retention periods, and regulatory requirements are still unconfirmed",
+        "priority": "RECOMMENDED",
+        "reason": "",
+        "blocks_workflow": false
+      },
+      {
+        "question": "Delivery team staffing, composition, and technical architecture are not finalized",
+        "priority": "RECOMMENDED",
+        "reason": "",
+        "blocks_workflow": false
+      },
+      {
+        "question": "Exact integration feasibility with the policy administration system has not been verified",
+        "priority": "RECOMMENDED",
+        "reason": "",
+        "blocks_workflow": false
+      },
+      {
+        "question": "What are the expected user roles and permissions?",
+        "priority": "RECOMMENDED",
+        "reason": "",
+        "blocks_workflow": false
+      }
+    ],
+    "clarification_history": [],
+    "iteration": 1,
+    "solution": {
+      "solution_summary": "The proposed MVP web portal enables eligible customers to securely review and renew existing personal motor and home insurance policies online, utilizing the existing identity provider, policy administration system, and email delivery service to reduce manual call center and email processing.",
+      "key_capabilities": [
+        "Customer authentication via the existing identity provider",
+        "Online review of existing personal motor and home insurance policies",
+        "Online submission of policy renewal requests",
+        "Triggering of confirmation emails via the existing email delivery service",
+        "Integration with the existing policy administration system acting as the source of truth"
+      ],
+      "integration_approach": [
+        "Connect the web portal to the existing identity provider for authentication",
+        "Retrieve policy information from and submit renewal requests to the existing policy administration system via APIs (assuming APIs are exposed)",
+        "Integrate with the existing email delivery service for confirmation notifications",
+        "Potential future updates to the internal customer service application for renewal status visibility"
+      ],
+      "technical_considerations": [
+        "Verification of policy administration system API documentation and sandbox availability",
+        "Confirmation of integration feasibility with the policy administration system",
+        "Adherence to unconfirmed regulatory compliance standards and data privacy requirements",
+        "Determination of specific performance targets, peak traffic volumes, and availability commitments for the MVP",
+        "Compliance with defined UI/UX brand guidelines or existing design systems, if applicable"
+      ],
+      "delivery_risks": [
+        "The 12-week delivery timeline contradicts the unverified integration feasibility and unconfirmed policy administration system API documentation",
+        "Delivery team staffing, composition, and technical architecture remain unfinalized",
+        "Unconfirmed non-functional requirements such as specific regulatory standards and performance targets could impact scope and timeline"
+      ],
+      "dependencies": [
+        "Access to policy administration system API documentation and sandbox environment",
+        "Confirmation of project team staffing and technical architecture",
+        "Clarification of regulatory compliance standards and operational performance targets"
+      ],
+      "assumptions": [
+        "The existing policy administration system exposes APIs for retrieving policy information and submitting renewal requests",
+        "The existing identity provider supports customer authentication",
+        "The existing email delivery service can be utilized for confirmation emails",
+        "The project team and technical architecture have not yet been finalized"
+      ]
+    },
+    "delivery_plan": {
+      "delivery_phases": [
+        "Inception and Feasibility Assessment",
+        "Design and Architecture",
+        "MVP Core Development",
+        "Integration and Testing",
+        "Deployment and Launch"
+      ],
+      "workstreams": [
+        "Product Management and Governance",
+        "UX/UI Design",
+        "Frontend Development",
+        "Backend and Integration",
+        "Quality Assurance and Testing",
+        "Operations and Support"
+      ],
+      "dependencies": [
+        "Access to policy administration system API documentation and sandbox environment",
+        "Confirmation of project team staffing and technical architecture",
+        "Clarification of regulatory compliance standards and operational performance targets",
+        "Availability of the existing identity provider and email delivery service"
+      ],
+      "milestones": [
+        "Feasibility Assessment Complete",
+        "Architecture and Design Sign-off",
+        "Core Integration Verified with Policy Administration System",
+        "MVP Feature Complete",
+        "User Acceptance Testing Passed",
+        "Production Launch"
+      ],
+      "team_roles": [
+        "Delivery Manager",
+        "Product Owner",
+        "Tech Lead / Solutions Architect",
+        "Frontend Developer",
+        "Backend Developer",
+        "QA Engineer",
+        "UX/UI Designer"
+      ],
+      "delivery_risks": [
+        "The 12-week delivery timeline contradicts unverified integration feasibility and unconfirmed policy administration system API documentation.",
+        "Delivery team staffing, composition, and technical architecture remain unfinalized.",
+        "Unconfirmed non-functional requirements such as specific regulatory standards and performance targets could impact scope and timeline."
+      ],
+      "delivery_methodology": {
+        "rationale": [],
+        "cadence": "",
+        "core_practices": [],
+        "governance": [],
+        "considered_alternatives": [],
+        "confidence": "LOW",
+        "unconfirmed_assumptions": [
+          "Requirements stability is unconfirmed due to missing regulatory standards and performance targets.",
+          "Backlog and prioritization maturity have not been established.",
+          "Dependency structure is high-risk due to unverified policy administration system APIs.",
+          "Unconfirmed: requirements stability.",
+          "Unconfirmed: planned vs interrupt-driven work.",
+          "Unconfirmed: stakeholder feedback.",
+          "Unconfirmed: incremental vs single-cutover release.",
+          "A methodology was not selected because the returned value was not one of SCRUM, KANBAN, WATERFALL, or HYBRID.",
+          "This methodology recommendation is indicative planning information and is not a customer commitment."
+        ]
+      }
+    },
+    "estimate": {
+      "effort_range": "300-450 person-days",
+      "duration_range": "14-18 weeks",
+      "confidence": "LOW",
+      "assumptions": [
+        "The existing policy administration system exposes APIs for retrieving policy information and submitting renewal requests",
+        "The existing identity provider supports customer authentication",
+        "The existing email delivery service can be utilized for confirmation emails",
+        "The project team and technical architecture have not yet been finalized"
+      ],
+      "risks_affecting_estimate": [
+        "The 12-week delivery timeline contradicts unverified integration feasibility and unconfirmed policy administration system API documentation",
+        "Delivery team staffing, composition, and technical architecture remain unfinalized",
+        "Unconfirmed non-functional requirements such as specific regulatory standards and performance targets could impact scope and timeline"
+      ],
+      "baseline_variance_explanation": "No customer-provided delivery estimate was identified. The standard estimate is an independent traditional human-led delivery assessment and is not adjusted to fit a customer deadline.",
+      "customer_baseline_duration": "",
+      "customer_deadline": "12 weeks",
+      "baseline_duration_range": "14-18 weeks",
+      "baseline_effort_range": "300-450 person-days",
+      "standard_deadline_fit": "EXCEEDS",
+      "customer_deadline_weeks": 12
+    },
+    "ai_optimization": null,
+    "deadline_gap_plan": null,
+    "delivery_review": {
+      "status": "READY",
+      "blocking_issues": [],
+      "clarification_questions": [],
+      "warnings": [
+        "The 12-week target launch timeline is constrained by unverified integration feasibility and unconfirmed policy administration system API documentation, creating a gap against the standard estimated duration of 14-18 weeks.",
+        "Delivery team staffing, composition, and technical architecture remain unfinalized.",
+        "Specific regulatory standards, performance targets, and availability commitments are unconfirmed.",
+        "The current AI delivery scenario exceeds the explicit customer deadline; this is a feasibility risk, not by itself a customer clarification blocker."
+      ],
+      "checks": [
+        "All functional requirements, acceptance criteria, and solution components trace directly back to the discovery artifacts.",
+        "Effort and duration ranges (300-450 person-days over 14-18 weeks) are plausibly consistent with the proposed delivery phases and workstreams.",
+        "Unresolved details concerning system integrations and compliance have been correctly captured as assumptions and warnings rather than hard delivery blockers.",
+        "No ungrounded quantified commitments were detected in requirements.",
+        "Customer unknowns were not promoted into confirmed requirements by deterministic checks.",
+        "5 non-blocking requirement question(s) remain explicitly carried forward as planning assumptions or follow-up items."
+      ]
+    },
+    "proposal": {
+      "executive_summary": "Customers currently renew personal motor and home insurance policies through manual interactions via call center or email, leading to unnecessary manual work, delays, and a poor customer experience. We propose launching a secure MVP web portal that allows eligible customers to review and renew existing insurance policies online, reducing manual renewal processing. Our independent indicative estimate is 14 to 18 weeks (300 to 450 person-days), which exceeds the customer's target launch of 12 weeks. Therefore, the 12-week target is presented as the customer's desired timeline and remains subject to feasibility assessment.",
+      "scope": [
+        "Customer authentication via the existing identity provider",
+        "Online review of existing personal motor and home insurance policies",
+        "Online submission of policy renewal requests",
+        "Triggering of confirmation emails via the existing email delivery service",
+        "Integration with the existing policy administration system acting as the source of truth"
+      ],
+      "delivery_approach": [
+        "Inception and Feasibility Assessment",
+        "Design and Architecture",
+        "MVP Core Development",
+        "Integration and Testing",
+        "Deployment and Launch"
+      ],
+      "timeline": "Customer target: 12 weeks; independent indicative estimate: 14-18 weeks. Deadline assessment: EXCEEDS. The requested date is not supported by the independent estimate and must not be treated as a delivery commitment.",
+      "assumptions": [
+        "The existing policy administration system exposes APIs for retrieving policy information and submitting renewal requests",
+        "The existing identity provider supports customer authentication",
+        "The existing email delivery service can be utilized for confirmation emails",
+        "The project team and technical architecture have not yet been finalized"
+      ],
+      "risks": [
+        "The 12-week delivery timeline contradicts unverified integration feasibility and unconfirmed policy administration system API documentation",
+        "Delivery team staffing, composition, and technical architecture remain unfinalized",
+        "Unconfirmed non-functional requirements such as specific regulatory standards and performance targets could impact scope and timeline"
+      ],
+      "next_steps": [
+        "Confirm access to policy administration system API documentation and sandbox environment",
+        "Clarify regulatory compliance standards and operational performance targets",
+        "Finalize project team staffing and technical architecture",
+        "Review integration feasibility to reconcile the 12-week target with the independent estimate"
+      ]
+    },
+    "sow": {
+      "objectives": [
+        "Launch a secure MVP web portal that allows eligible customers to review and renew existing personal motor and home insurance policies online.",
+        "Reduce manual renewal processing to eliminate unnecessary manual work, delays, and poor customer experiences.",
+        "Make the insurance renewal journey faster, more transparent, and efficient."
+      ],
+      "deliverables": [
+        "Secure MVP web portal for online policy review and renewal",
+        "Customer authentication integration using the existing identity provider",
+        "API integration with the existing policy administration system as the source of truth",
+        "Automated confirmation email triggers utilizing the existing email delivery service",
+        "Deployment and launch documentation"
+      ],
+      "in_scope": [
+        "Customer authentication via existing identity provider",
+        "Online review of existing personal motor and home insurance policies",
+        "Online submission of policy renewal requests",
+        "Integration with policy administration system for data retrieval and renewal submission",
+        "Triggering confirmation emails via existing email service"
+      ],
+      "out_of_scope": [
+        "Complete insurance platform implementation beyond the defined MVP",
+        "Replacing the existing policy administration system as the source of truth",
+        "Unconfirmed regulatory compliance modules",
+        "Definitive internal customer service application updates beyond potential future visibility enhancements"
+      ],
+      "dependencies": [
+        "Access to policy administration system API documentation and sandbox environment",
+        "Confirmation of project team staffing and technical architecture",
+        "Clarification of regulatory compliance standards and operational performance targets",
+        "Availability of the existing identity provider and email delivery service"
+      ],
+      "acceptance": [
+        "An eligible customer can successfully log into the web portal using the existing identity provider.",
+        "An eligible customer can view their existing personal motor and home insurance policy details within the web portal.",
+        "An eligible customer can submit a policy renewal request through the web portal and trigger a confirmation email via the email delivery service."
+      ],
+      "timeline": "Customer target: 12 weeks; independent indicative estimate: 14-18 weeks. Deadline assessment: EXCEEDS. The requested date is not supported by the independent estimate and must not be treated as a delivery commitment.",
+      "assumptions": [
+        "The existing policy administration system exposes APIs for retrieving policy information and submitting renewal requests",
+        "The existing identity provider supports customer authentication",
+        "The existing email delivery service can be utilized for confirmation emails",
+        "The project team and technical architecture have not yet been finalized"
+      ]
+    },
+    "execution": {
+      "mode": "analyze",
+      "nodes_executed": [
+        "discovery",
+        "requirements",
+        "validation",
+        "solution",
+        "delivery_plan",
+        "estimate",
+        "delivery_review",
+        "proposal",
+        "sow",
+        "complete"
+      ],
+      "nodes_skipped": [],
+      "llm_calls": 9,
+      "llm_calls_avoided": 0,
+      "elapsed_seconds": 14.84,
+      "regenerate_upstream": true,
+      "llm_usage": [
+        {
+          "provider": "gemini",
+          "model": "gemini-3.5-flash-lite",
+          "node": "discovery",
+          "input_tokens": 1378,
+          "output_tokens": 498,
+          "total_tokens": 1876,
+          "duration_ms": 2705
+        },
+        {
+          "provider": "gemini",
+          "model": "gemini-3.5-flash-lite",
+          "node": "requirements",
+          "input_tokens": 616,
+          "output_tokens": 400,
+          "total_tokens": 1016,
+          "duration_ms": 1459
+        },
+        {
+          "provider": "gemini",
+          "model": "gemini-3.5-flash-lite",
+          "node": "validation",
+          "input_tokens": 2318,
+          "output_tokens": 236,
+          "total_tokens": 2554,
+          "duration_ms": 1173
+        },
+        {
+          "provider": "gemini",
+          "model": "gemini-3.5-flash-lite",
+          "node": "solution",
+          "input_tokens": 930,
+          "output_tokens": 508,
+          "total_tokens": 1438,
+          "duration_ms": 1748
+        },
+        {
+          "provider": "gemini",
+          "model": "gemini-3.5-flash-lite",
+          "node": "delivery_plan",
+          "input_tokens": 1475,
+          "output_tokens": 445,
+          "total_tokens": 1920,
+          "duration_ms": 1605
+        },
+        {
+          "provider": "gemini",
+          "model": "gemini-3.5-flash-lite",
+          "node": "estimate",
+          "input_tokens": 1776,
+          "output_tokens": 284,
+          "total_tokens": 2060,
+          "duration_ms": 1203
+        },
+        {
+          "provider": "gemini",
+          "model": "gemini-3.5-flash-lite",
+          "node": "delivery_review",
+          "input_tokens": 2291,
+          "output_tokens": 213,
+          "total_tokens": 2504,
+          "duration_ms": 1232
+        },
+        {
+          "provider": "gemini",
+          "model": "gemini-3.5-flash-lite",
+          "node": "proposal",
+          "input_tokens": 2123,
+          "output_tokens": 526,
+          "total_tokens": 2649,
+          "duration_ms": 1697
+        },
+        {
+          "provider": "gemini",
+          "model": "gemini-3.5-flash-lite",
+          "node": "sow",
+          "input_tokens": 1839,
+          "output_tokens": 527,
+          "total_tokens": 2366,
+          "duration_ms": 1794
+        }
+      ],
+      "llm_cost": {
+        "pricing_available": true,
+        "calls": 9,
+        "priced_calls": 9,
+        "unpriced_calls": 0,
+        "input_cost_usd": 0.0044237999999999994,
+        "output_cost_usd": 0.0090925,
+        "total_cost_usd": 0.013516299999999998,
+        "by_node": [
+          {
+            "node": "discovery",
+            "calls": 1,
+            "pricing_available": true,
+            "input_cost_usd": 0.00041339999999999997,
+            "output_cost_usd": 0.001245,
+            "total_cost_usd": 0.0016584
+          },
+          {
+            "node": "requirements",
+            "calls": 1,
+            "pricing_available": true,
+            "input_cost_usd": 0.0001848,
+            "output_cost_usd": 0.001,
+            "total_cost_usd": 0.0011848
+          },
+          {
+            "node": "validation",
+            "calls": 1,
+            "pricing_available": true,
+            "input_cost_usd": 0.0006954,
+            "output_cost_usd": 0.00059,
+            "total_cost_usd": 0.0012854
+          },
+          {
+            "node": "solution",
+            "calls": 1,
+            "pricing_available": true,
+            "input_cost_usd": 0.000279,
+            "output_cost_usd": 0.00127,
+            "total_cost_usd": 0.001549
+          },
+          {
+            "node": "delivery_plan",
+            "calls": 1,
+            "pricing_available": true,
+            "input_cost_usd": 0.0004425,
+            "output_cost_usd": 0.0011125,
+            "total_cost_usd": 0.001555
+          },
+          {
+            "node": "estimate",
+            "calls": 1,
+            "pricing_available": true,
+            "input_cost_usd": 0.0005327999999999999,
+            "output_cost_usd": 0.00071,
+            "total_cost_usd": 0.0012428
+          },
+          {
+            "node": "delivery_review",
+            "calls": 1,
+            "pricing_available": true,
+            "input_cost_usd": 0.0006873,
+            "output_cost_usd": 0.0005325,
+            "total_cost_usd": 0.0012198
+          },
+          {
+            "node": "proposal",
+            "calls": 1,
+            "pricing_available": true,
+            "input_cost_usd": 0.0006369,
+            "output_cost_usd": 0.001315,
+            "total_cost_usd": 0.0019519
+          },
+          {
+            "node": "sow",
+            "calls": 1,
+            "pricing_available": true,
+            "input_cost_usd": 0.0005516999999999999,
+            "output_cost_usd": 0.0013175,
+            "total_cost_usd": 0.0018692000000000001
+          }
+        ]
+      }
+    },
+    "default_view": "assessment",
+    "verdict": {
+      "code": "DEADLINE_AT_RISK",
+      "label": "Deadline at risk",
+      "summary": "An independent estimate is available, but it exceeds the requested deadline. Do not treat the date as a commitment without scope, sequence, or capacity changes.",
+      "workflow_status": "COMPLETE",
+      "standard_deadline_fit": "EXCEEDS"
+    },
+    "assessment": {
+      "title": "AI Delivery Assessment",
+      "verdict": {
+        "code": "DEADLINE_AT_RISK",
+        "label": "Deadline at risk",
+        "summary": "An independent estimate is available, but it exceeds the requested deadline. Do not treat the date as a commitment without scope, sequence, or capacity changes.",
+        "workflow_status": "COMPLETE",
+        "standard_deadline_fit": "EXCEEDS"
+      },
+      "request": "# Delivery Request: Insurance Policy Renewal Portal MVP\n\n## 1. Business Context\n\nWe are a mid-sized insurance company offering personal motor and home insurance. Currently, customers renew policies by contacting our call center or sending emails to their insurance agent. This creates unnecessary manual work, delays, and a poor customer experience.\n\nWe want to build a customer self-service web portal that allows eligible customers to review and renew their existing insurance policies online.\n\nThe goal is to launch a secure MVP that reduces manual renewal processing and makes the renewal journey faster and more transparent.\n\n## 2. Business Objectives\n\n- Allow eligible customers to complete a policy renewal without contacting the call center.\n- Reduce manual work for customer service employees.\n- Clearly display policy details, premium, and coverage before the customer confirms a renewal.\n- Provide customers with confirmation that their renewal request has been completed.\n- Establish a foundation for adding more insurance products in the future.\n\n## 3. Target Users\n\n**Existing insurance customers**\n- Need to access their policies securely.\n- Want to review renewal terms and complete a renewal online.\n- Need confirmation and access to their updated policy information.\n\n**Customer service employees**\n- Need to help customers who cannot complete a renewal online.\n- Need visibility into renewal requests and their processing status.\n\n**Operations team**\n- Needs a reliable process for handling renewal requests and exceptions.\n\n## 4. Functional Scope\n\n### Customer access\n- Customers can sign in securely.\n- Customers can view their existing policies and identify which policies are eligible for renewal.\n- Customers can view policy details, current coverage, premium, and renewal terms.\n\n### Renewal journey\n- Customers can start a renewal for an eligible policy.\n- The system validates eligibility before allowing the customer to proceed.\n- Customers can review the proposed premium and coverage before confirming.\n- Customers must explicitly confirm the renewal before the request is submitted.\n- The system prevents duplicate submissions for the same policy renewal.\n- If a policy is not eligible, the customer receives a clear explanation and instructions on what to do next.\n\n### Confirmation and policy information\n- Customers receive an on-screen confirmation after a successful renewal.\n- A confirmation email is sent after the renewal is successfully processed.\n- Customers can view the updated policy information and renewal status.\n\n### Operational visibility\n- Customer service employees can search for a customer or policy and view its renewal status.\n- Employees can identify renewals that failed or require manual intervention.\n- Failed renewal attempts must not be presented to customers as successful renewals.\n\n## 5. Existing Systems and Integrations\n\nThe company already has:\n- A policy administration system that is the source of truth for policies, eligibility, premiums, and coverage.\n- An identity provider supporting customer authentication.\n- An email delivery service.\n- An internal customer service application.\n\nThe policy administration system exposes APIs for retrieving policy information and submitting renewal requests, but its documentation and sandbox availability have not yet been confirmed.\n\nThe customer service application does not currently provide a dedicated renewal management workflow.\n\nDo not assume that any undocumented API, data field, or integration capability is available.\n\n## 6. Non-Functional Requirements\n\n- Protect customer and policy information from unauthorized access.\n- Enforce authorization so customers can access only their own policies.\n- Encrypt sensitive information in transit.\n- Maintain an audit trail of renewal submissions and their outcomes.\n- Handle timeouts and temporary integration failures without creating duplicate renewals.\n- Provide clear error messages and recovery guidance.\n- Design the portal to support future expansion to additional insurance products.\n\nSpecific performance targets, availability commitments, retention periods, and regulatory requirements still need confirmation.\n\n## 7. MVP Boundaries\n\n**In scope**\n- Responsive web portal for existing customers.\n- Secure customer access.\n- Policy listing and renewal eligibility.\n- Policy and renewal-term review.\n- Renewal confirmation and submission.\n- Customer confirmation email.\n- Basic customer service visibility into renewal status.\n- Error handling and auditability for renewal processing.\n\n**Out of scope**\n- New insurance policy purchases.\n- Claims submission or claims adjudication.\n- Automated underwriting or risk scoring.\n- Mobile native applications.\n- Replacing the existing policy administration system.\n- Rebuilding the company's identity provider.\n- Advanced analytics and personalized insurance recommendations.\n\n## 8. Delivery Constraints and Assumptions\n\n- This is an MVP, not a complete insurance platform.\n- The existing policy administration system remains the source of truth.\n- The project team and technical architecture have not yet been finalized.\n- Integration feasibility must be verified before committing to delivery dates.\n- The customer experience should prioritize a straightforward, accessible renewal journey.\n- Security, authorization, and prevention of duplicate renewals are critical requirements.\n\nThe business would like to launch within approximately 12 weeks, but this is a target rather than an approved commitment. The delivery team must assess feasibility after clarifying integration readiness, scope, and implementation risks.\n\n## 9. Requested Delivery Assessment\n\nPlease produce a complete delivery assessment covering:\n- Clarification questions and material unknowns.\n- Functional and non-functional requirements.\n- Proposed solution and integration approach.\n- Delivery phases, workstreams, milestones, and dependencies.\n- Estimated effort and timeline with explicit assumptions and confidence.\n- Major delivery risks and mitigations.\n- MVP scope, exclusions, and acceptance approach.\n- A proposal and statement of work consistent with the available evidence.\n\nDo not invent confirmed API capabilities, regulatory obligations, staffing commitments, or delivery guarantees. Clearly distinguish known facts, assumptions, unresolved questions, and recommendations.",
+      "problem": "Customers currently renew personal motor and home insurance policies through manual interactions via call center or email, leading to unnecessary manual work, delays, and a poor customer experience.",
+      "business_goal": "Launch a secure MVP web portal that allows eligible customers to review and renew existing insurance policies online, reducing manual renewal processing and making the journey faster and more transparent.",
+      "deadline": {
+        "requested": "12 weeks",
+        "independent_estimate": "14-18 weeks",
+        "customer_estimate": "",
+        "fit": "EXCEEDS",
+        "gap": "Independent estimate exceeds the requested deadline.",
+        "effort": "300-450 person-days",
+        "confidence": "LOW"
+      },
+      "what_we_know": [
+        "# Delivery Request: Insurance Policy Renewal Portal MVP\n\n## 1. Business Context\n\nWe are a mid-sized insurance company offering personal motor and home insurance. Currently, customers renew policies by contacting our call center or sendin…",
+        "Users: Existing insurance customers",
+        "Users: Customer service employees",
+        "Users: Operations team",
+        "System: Policy administration system",
+        "System: Identity provider"
+      ],
+      "what_is_uncertain": [
+        "Policy administration system API documentation and sandbox availability have not yet been confirmed",
+        "Specific performance targets, availability commitments, retention periods, and regulatory requirements are still unconfirmed",
+        "Delivery team staffing, composition, and technical architecture are not finalized",
+        "Exact integration feasibility with the policy administration system has not been verified",
+        "Are the policy administration system API documentation and sandbox environment now accessible for team review?",
+        "What specific regulatory compliance standards apply to the renewal portal?"
+      ],
+      "risks": [
+        "Capacity or staffing risk. Delivery team staffing, composition, and technical architecture remain unfinalized.",
+        "Deadline compression. Evidence: Independent estimate is 14-18 weeks vs requested 12 weeks."
+      ],
+      "why": [
+        "An independent estimate is available, but it exceeds the requested deadline. Do not treat the date as a commitment without scope, sequence, or capacity changes.",
+        "Independent estimate is 14-18 weeks vs requested 12 weeks."
+      ],
+      "ask_next": [
+        "Are the policy administration system API documentation and sandbox environment now accessible for team review?",
+        "What specific regulatory compliance standards apply to the renewal portal?",
+        "What are the expected peak traffic volumes and availability requirements for the MVP?",
+        "What specific updates or data fields are required within the internal customer service application for renewal status visibility?",
+        "Are there defined UI/UX brand guidelines or existing design systems the web portal must adhere to?"
+      ],
+      "delivery_options": {
+        "standard": "14-18 weeks",
+        "ai_assisted": "",
+        "ai_summary": "",
+        "ai_feasibility": "",
+        "ai_conditions": []
+      },
+      "recommended_next_step": [
+        "Treat the requested date as at risk: independent estimate is 14-18 weeks vs requested 12 weeks. Decide whether to reduce first-release scope, change sequencing, or move the date.",
+        "If useful, run the optional AI-assisted scenario — it is not a guaranteed acceleration."
+      ],
+      "disclaimer": "This is an independent feasibility assessment based only on the information provided. It is not a delivery commitment, commercial quote, or statistically calibrated forecast.",
+      "estimate_disclaimer": "Indicative estimate — based on the information provided, not a delivery commitment or quote. Use it to support a delivery decision, not as a contractual forecast."
+    },
+    "assessment_text": "AI DELIVERY ASSESSMENT\n\nREQUEST / PROJECT\nCustomers currently renew personal motor and home insurance policies through manual interactions via call center or email, leading to unnecessary manual work, delays, and a poor customer experience.\nBusiness goal: Launch a secure MVP web portal that allows eligible customers to review and renew existing insurance policies online, reducing manual renewal processing and making the journey faster and more transparent.\n\nEXECUTIVE VERDICT\nDeadline at risk\nAn independent estimate is available, but it exceeds the requested deadline. Do not treat the date as a commitment without scope, sequence, or capacity changes.\n\nDEADLINE\n- Requested deadline: 12 weeks\n- Independent estimate: 14-18 weeks\n- Customer estimate: Not provided\n- Deadline fit: EXCEEDS\n- Gap: Independent estimate exceeds the requested deadline.\n\nWHAT WE KNOW\n- # Delivery Request: Insurance Policy Renewal Portal MVP\n\n## 1. Business Context\n\nWe are a mid-sized insurance company offering personal motor and home insurance. Currently, customers renew policies by contacting our call center or sendin…\n- Users: Existing insurance customers\n- Users: Customer service employees\n- Users: Operations team\n- System: Policy administration system\n- System: Identity provider\n\nWHAT IS STILL UNCERTAIN\n- Policy administration system API documentation and sandbox availability have not yet been confirmed\n- Specific performance targets, availability commitments, retention periods, and regulatory requirements are still unconfirmed\n- Delivery team staffing, composition, and technical architecture are not finalized\n- Exact integration feasibility with the policy administration system has not been verified\n- Are the policy administration system API documentation and sandbox environment now accessible for team review?\n- What specific regulatory compliance standards apply to the renewal portal?\n\nTOP DELIVERY RISKS\n- Capacity or staffing risk. Delivery team staffing, composition, and technical architecture remain unfinalized.\n- Deadline compression. Evidence: Independent estimate is 14-18 weeks vs requested 12 weeks.\n\nWHAT WE WOULD ASK NEXT\n- Are the policy administration system API documentation and sandbox environment now accessible for team review?\n- What specific regulatory compliance standards apply to the renewal portal?\n- What are the expected peak traffic volumes and availability requirements for the MVP?\n- What specific updates or data fields are required within the internal customer service application for renewal status visibility?\n- Are there defined UI/UX brand guidelines or existing design systems the web portal must adhere to?\n\nDELIVERY OPTIONS\n- Standard approach: 14-18 weeks\n- Optional AI-assisted scenario: Not run\n\nRECOMMENDED NEXT STEP\n- Treat the requested date as at risk: independent estimate is 14-18 weeks vs requested 12 weeks. Decide whether to reduce first-release scope, change sequencing, or move the date.\n- If useful, run the optional AI-assisted scenario — it is not a guaranteed acceleration.\n\nDISCLAIMER\nThis is an independent feasibility assessment based only on the information provided. It is not a delivery commitment, commercial quote, or statistically calibrated forecast.\n",
+    "print_assessment_text": "AI DELIVERY ASSESSMENT\n\nVERDICT\nDeadline at risk\n\nDEADLINE\n- Requested deadline: 12 weeks\n- Independent estimate: 14-18 weeks\n- Customer estimate: Not provided\n- Deadline fit: EXCEEDS\n\nWHY\n- An independent estimate is available, but it exceeds the requested deadline. Do not treat the date as a commitment without scope, sequence, or capacity changes.\n- Independent estimate is 14-18 weeks vs requested 12 weeks.\n\nTOP RISKS\n- Capacity or staffing risk. Delivery team staffing, composition, and technical architecture remain unfinalized.\n- Deadline compression. Evidence: Independent estimate is 14-18 weeks vs requested 12 weeks.\n\nWHAT'S UNCERTAIN\n- Policy administration system API documentation and sandbox availability have not yet been confirmed\n- Specific performance targets, availability commitments, retention periods, and regulatory requirements are still unconfirmed\n- Delivery team staffing, composition, and technical architecture are not finalized\n\nRECOMMENDED NEXT STEP\n- Treat the requested date as at risk: independent estimate is 14-18 weeks vs requested 12 weeks. Decide whether to reduce first-release scope, change sequencing, or move the date.\n- If useful, run the optional AI-assisted scenario — it is not a guaranteed acceleration.\n\nDISCLAIMER\nThis is an independent feasibility assessment based only on the information provided. It is not a delivery commitment, commercial quote, or statistically calibrated forecast.\n",
+    "gap_closing_available": false,
+    "artifact_texts": {
+      "assessment": "AI DELIVERY ASSESSMENT\n\nREQUEST / PROJECT\nCustomers currently renew personal motor and home insurance policies through manual interactions via call center or email, leading to unnecessary manual work, delays, and a poor customer experience.\nBusiness goal: Launch a secure MVP web portal that allows eligible customers to review and renew existing insurance policies online, reducing manual renewal processing and making the journey faster and more transparent.\n\nEXECUTIVE VERDICT\nDeadline at risk\nAn independent estimate is available, but it exceeds the requested deadline. Do not treat the date as a commitment without scope, sequence, or capacity changes.\n\nDEADLINE\n- Requested deadline: 12 weeks\n- Independent estimate: 14-18 weeks\n- Customer estimate: Not provided\n- Deadline fit: EXCEEDS\n- Gap: Independent estimate exceeds the requested deadline.\n\nWHAT WE KNOW\n- # Delivery Request: Insurance Policy Renewal Portal MVP\n\n## 1. Business Context\n\nWe are a mid-sized insurance company offering personal motor and home insurance. Currently, customers renew policies by contacting our call center or sendin…\n- Users: Existing insurance customers\n- Users: Customer service employees\n- Users: Operations team\n- System: Policy administration system\n- System: Identity provider\n\nWHAT IS STILL UNCERTAIN\n- Policy administration system API documentation and sandbox availability have not yet been confirmed\n- Specific performance targets, availability commitments, retention periods, and regulatory requirements are still unconfirmed\n- Delivery team staffing, composition, and technical architecture are not finalized\n- Exact integration feasibility with the policy administration system has not been verified\n- Are the policy administration system API documentation and sandbox environment now accessible for team review?\n- What specific regulatory compliance standards apply to the renewal portal?\n\nTOP DELIVERY RISKS\n- Capacity or staffing risk. Delivery team staffing, composition, and technical architecture remain unfinalized.\n- Deadline compression. Evidence: Independent estimate is 14-18 weeks vs requested 12 weeks.\n\nWHAT WE WOULD ASK NEXT\n- Are the policy administration system API documentation and sandbox environment now accessible for team review?\n- What specific regulatory compliance standards apply to the renewal portal?\n- What are the expected peak traffic volumes and availability requirements for the MVP?\n- What specific updates or data fields are required within the internal customer service application for renewal status visibility?\n- Are there defined UI/UX brand guidelines or existing design systems the web portal must adhere to?\n\nDELIVERY OPTIONS\n- Standard approach: 14-18 weeks\n- Optional AI-assisted scenario: Not run\n\nRECOMMENDED NEXT STEP\n- Treat the requested date as at risk: independent estimate is 14-18 weeks vs requested 12 weeks. Decide whether to reduce first-release scope, change sequencing, or move the date.\n- If useful, run the optional AI-assisted scenario — it is not a guaranteed acceleration.\n\nDISCLAIMER\nThis is an independent feasibility assessment based only on the information provided. It is not a delivery commitment, commercial quote, or statistically calibrated forecast.",
+      "solution": "SOLUTION\n\nSummary\nThe proposed MVP web portal enables eligible customers to securely review and renew existing personal motor and home insurance policies online, utilizing the existing identity provider, policy administration system, and email delivery service to reduce manual call center and email processing.\n\nKey capabilities\n- Customer authentication via the existing identity provider\n- Online review of existing personal motor and home insurance policies\n- Online submission of policy renewal requests\n- Triggering of confirmation emails via the existing email delivery service\n- Integration with the existing policy administration system acting as the source of truth\n\nIntegration approach\n- Connect the web portal to the existing identity provider for authentication\n- Retrieve policy information from and submit renewal requests to the existing policy administration system via APIs (assuming APIs are exposed)\n- Integrate with the existing email delivery service for confirmation notifications\n- Potential future updates to the internal customer service application for renewal status visibility\n\nTechnical considerations\n- Verification of policy administration system API documentation and sandbox availability\n- Confirmation of integration feasibility with the policy administration system\n- Adherence to unconfirmed regulatory compliance standards and data privacy requirements\n- Determination of specific performance targets, peak traffic volumes, and availability commitments for the MVP\n- Compliance with defined UI/UX brand guidelines or existing design systems, if applicable\n\nDelivery risks\n- The 12-week delivery timeline contradicts the unverified integration feasibility and unconfirmed policy administration system API documentation\n- Delivery team staffing, composition, and technical architecture remain unfinalized\n- Unconfirmed non-functional requirements such as specific regulatory standards and performance targets could impact scope and timeline\n\nDependencies\n- Access to policy administration system API documentation and sandbox environment\n- Confirmation of project team staffing and technical architecture\n- Clarification of regulatory compliance standards and operational performance targets\n\nAssumptions\n- The existing policy administration system exposes APIs for retrieving policy information and submitting renewal requests\n- The existing identity provider supports customer authentication\n- The existing email delivery service can be utilized for confirmation emails\n- The project team and technical architecture have not yet been finalized\n",
+      "delivery_plan": "DELIVERY PLAN\n\nDelivery phases\n- Inception and Feasibility Assessment\n- Design and Architecture\n- MVP Core Development\n- Integration and Testing\n- Deployment and Launch\n\nWorkstreams\n- Product Management and Governance\n- UX/UI Design\n- Frontend Development\n- Backend and Integration\n- Quality Assurance and Testing\n- Operations and Support\n\nDependencies\n- Access to policy administration system API documentation and sandbox environment\n- Confirmation of project team staffing and technical architecture\n- Clarification of regulatory compliance standards and operational performance targets\n- Availability of the existing identity provider and email delivery service\n\nMilestones\n- Feasibility Assessment Complete\n- Architecture and Design Sign-off\n- Core Integration Verified with Policy Administration System\n- MVP Feature Complete\n- User Acceptance Testing Passed\n- Production Launch\n\nTeam roles\n- Delivery Manager\n- Product Owner\n- Tech Lead / Solutions Architect\n- Frontend Developer\n- Backend Developer\n- QA Engineer\n- UX/UI Designer\n\nDelivery risks\n- The 12-week delivery timeline contradicts unverified integration feasibility and unconfirmed policy administration system API documentation.\n- Delivery team staffing, composition, and technical architecture remain unfinalized.\n- Unconfirmed non-functional requirements such as specific regulatory standards and performance targets could impact scope and timeline.\n",
+      "estimate": "INDEPENDENT ESTIMATE\n\nBaseline human-led estimate. This is not the AI-assisted scenario.\n\nDuration\n14-18 weeks\n\nEffort\n300-450 person-days\n\nConfidence\nLOW\n\nRequested deadline\n12 weeks\n\nDeadline fit\nEXCEEDS\n\nAssumptions\n- The existing policy administration system exposes APIs for retrieving policy information and submitting renewal requests\n- The existing identity provider supports customer authentication\n- The existing email delivery service can be utilized for confirmation emails\n- The project team and technical architecture have not yet been finalized\n\nRisks affecting the estimate\n- The 12-week delivery timeline contradicts unverified integration feasibility and unconfirmed policy administration system API documentation\n- Delivery team staffing, composition, and technical architecture remain unfinalized\n- Unconfirmed non-functional requirements such as specific regulatory standards and performance targets could impact scope and timeline\n\nVariance vs customer estimate\nNo customer-provided delivery estimate was identified. The standard estimate is an independent traditional human-led delivery assessment and is not adjusted to fit a customer deadline.\n\nDisclaimer\nIndicative estimate — based on the information provided, not a delivery commitment or quote. Use it to support a delivery decision, not as a contractual forecast.\n",
+      "proposal": "PROPOSAL\n\nExecutive summary\nCustomers currently renew personal motor and home insurance policies through manual interactions via call center or email, leading to unnecessary manual work, delays, and a poor customer experience. We propose launching a secure MVP web portal that allows eligible customers to review and renew existing insurance policies online, reducing manual renewal processing. Our independent indicative estimate is 14 to 18 weeks (300 to 450 person-days), which exceeds the customer's target launch of 12 weeks. Therefore, the 12-week target is presented as the customer's desired timeline and remains subject to feasibility assessment.\n\nScope\n- Customer authentication via the existing identity provider\n- Online review of existing personal motor and home insurance policies\n- Online submission of policy renewal requests\n- Triggering of confirmation emails via the existing email delivery service\n- Integration with the existing policy administration system acting as the source of truth\n\nDelivery approach\n- Inception and Feasibility Assessment\n- Design and Architecture\n- MVP Core Development\n- Integration and Testing\n- Deployment and Launch\n\nTimeline\nCustomer target: 12 weeks; independent indicative estimate: 14-18 weeks. Deadline assessment: EXCEEDS. The requested date is not supported by the independent estimate and must not be treated as a delivery commitment.\n\nAssumptions\n- The existing policy administration system exposes APIs for retrieving policy information and submitting renewal requests\n- The existing identity provider supports customer authentication\n- The existing email delivery service can be utilized for confirmation emails\n- The project team and technical architecture have not yet been finalized\n\nRisks\n- The 12-week delivery timeline contradicts unverified integration feasibility and unconfirmed policy administration system API documentation\n- Delivery team staffing, composition, and technical architecture remain unfinalized\n- Unconfirmed non-functional requirements such as specific regulatory standards and performance targets could impact scope and timeline\n\nNext steps\n- Confirm access to policy administration system API documentation and sandbox environment\n- Clarify regulatory compliance standards and operational performance targets\n- Finalize project team staffing and technical architecture\n- Review integration feasibility to reconcile the 12-week target with the independent estimate\n",
+      "sow": "STATEMENT OF WORK\n\nObjectives\n- Launch a secure MVP web portal that allows eligible customers to review and renew existing personal motor and home insurance policies online.\n- Reduce manual renewal processing to eliminate unnecessary manual work, delays, and poor customer experiences.\n- Make the insurance renewal journey faster, more transparent, and efficient.\n\nDeliverables\n- Secure MVP web portal for online policy review and renewal\n- Customer authentication integration using the existing identity provider\n- API integration with the existing policy administration system as the source of truth\n- Automated confirmation email triggers utilizing the existing email delivery service\n- Deployment and launch documentation\n\nIn scope\n- Customer authentication via existing identity provider\n- Online review of existing personal motor and home insurance policies\n- Online submission of policy renewal requests\n- Integration with policy administration system for data retrieval and renewal submission\n- Triggering confirmation emails via existing email service\n\nOut of scope\n- Complete insurance platform implementation beyond the defined MVP\n- Replacing the existing policy administration system as the source of truth\n- Unconfirmed regulatory compliance modules\n- Definitive internal customer service application updates beyond potential future visibility enhancements\n\nDependencies\n- Access to policy administration system API documentation and sandbox environment\n- Confirmation of project team staffing and technical architecture\n- Clarification of regulatory compliance standards and operational performance targets\n- Availability of the existing identity provider and email delivery service\n\nAcceptance\n- An eligible customer can successfully log into the web portal using the existing identity provider.\n- An eligible customer can view their existing personal motor and home insurance policy details within the web portal.\n- An eligible customer can submit a policy renewal request through the web portal and trigger a confirmation email via the email delivery service.\n\nTimeline\nCustomer target: 12 weeks; independent indicative estimate: 14-18 weeks. Deadline assessment: EXCEEDS. The requested date is not supported by the independent estimate and must not be treated as a delivery commitment.\n\nAssumptions\n- The existing policy administration system exposes APIs for retrieving policy information and submitting renewal requests\n- The existing identity provider supports customer authentication\n- The existing email delivery service can be utilized for confirmation emails\n- The project team and technical architecture have not yet been finalized\n"
+    }
+  }

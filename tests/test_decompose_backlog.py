@@ -210,6 +210,28 @@ def test_exact_source_title_keeps_source_origin() -> None:
     assert title_generated == []
 
 
+def test_reordered_story_title_paraphrase_is_generated_not_source() -> None:
+    payload = load_fixture()
+    proposal = representative_complete_proposal()
+    story = next(item for item in proposal["items"] if item["local_id"] == "story-premium")
+    excerpt = payload["requirements"]["functional_requirements"][2]
+    story["title"] = "View current premium and coverage before confirmation"
+    story["title_origin"] = "source"
+    assert story["title"] not in excerpt
+    assert excerpt not in story["title"]
+
+    backlog, findings = decompose_backlog(_envelope(), MockProvider(proposal), repair=False)
+    stored = next(
+        item for item in backlog.items if item.title == "View current premium and coverage before confirmation"
+    )
+    assert any(
+        item.code is FindingCode.GENERATED_CONTENT
+        and stored.canonical_id in item.canonical_ids
+        and "title" in item.message
+        for item in findings.items
+    )
+
+
 def test_grounded_paraphrase_title_is_generated_not_source() -> None:
     payload = load_fixture()
     proposal = representative_complete_proposal()

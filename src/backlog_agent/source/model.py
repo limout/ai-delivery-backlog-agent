@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from backlog_agent.backlog.ids import normalize_source_text
+from backlog_agent.source.request_headings import NarrativeSection
 
 _TIMELINE_OR_ESTIMATE = (
     "week",
@@ -45,6 +46,7 @@ class NormalizedProjectSource:
     workstreams: tuple[SourceFact, ...] = ()
     assumptions: tuple[SourceFact, ...] = ()
     unknowns: tuple[SourceFact, ...] = ()
+    narrative_sections: tuple[NarrativeSection, ...] = ()
     prompt_facts: dict[str, Any] = field(default_factory=dict)
 
 

@@ -12,6 +12,13 @@ from backlog_agent.source.model import (
     SourceFact,
     looks_like_timeline_or_estimate,
 )
+from backlog_agent.source.request_headings import (
+    NarrativeSection,
+    parse_labeled_request_outcomes,
+    parse_narrative_sections,
+)
+
+_REQUEST_PROMPT_TEXT_LIMIT = 2500
 
 _ALLOWED_PREFIXES = (
     "$.user_request",
@@ -57,6 +64,7 @@ def from_copilot(envelope: CopilotWorkflowResponseV1) -> NormalizedProjectSource
         _facts(original, "$.discovery.unknowns", "unknowns")
         + _facts(original, "$.requirements.open_questions", "open_questions")
     )
+    narrative_sections = parse_narrative_sections(request_text)
     return NormalizedProjectSource(
         contract_id=COPILOT_WORKFLOW_RESPONSE_V1,
         original=original,
@@ -73,6 +81,7 @@ def from_copilot(envelope: CopilotWorkflowResponseV1) -> NormalizedProjectSource
         workstreams=workstreams,
         assumptions=assumptions,
         unknowns=unknowns,
+        narrative_sections=narrative_sections,
         prompt_facts=_prompt_facts(
             original=original,
             request=request,
@@ -87,6 +96,7 @@ def from_copilot(envelope: CopilotWorkflowResponseV1) -> NormalizedProjectSource
             workstreams=workstreams,
             assumptions=assumptions,
             unknowns=unknowns,
+            narrative_sections=narrative_sections,
         ),
     )
 
@@ -112,6 +122,18 @@ def _as_prompt_fact(fact: SourceFact) -> dict[str, str]:
     return {"json_path": fact.json_path, "text": fact.text}
 
 
+def _narrative_prompt_fact(section: NarrativeSection) -> dict[str, Any]:
+    return {
+        "label": section.label,
+        "title": section.title,
+        "json_path": section.json_path,
+        "excerpt": section.excerpt,
+        "excerpt_complete": section.excerpt_complete,
+        "evidence_kind": section.evidence_kind,
+        "role": "narrative evidence inside $.user_request; not a structured requirement",
+    }
+
+
 def _prompt_facts(
     *,
     original: Mapping[str, Any],
@@ -127,10 +149,19 @@ def _prompt_facts(
     workstreams: tuple[SourceFact, ...],
     assumptions: tuple[SourceFact, ...],
     unknowns: tuple[SourceFact, ...],
+    narrative_sections: tuple[NarrativeSection, ...] = (),
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "metadata": {"source_contract_id": COPILOT_WORKFLOW_RESPONSE_V1},
         "request": _as_prompt_fact(request),
+        "required_functional_coverage": [
+            {
+                "json_path": fact.json_path,
+                "text": fact.text,
+                "requires": "one user_story whose provenance cites this exact path and text",
+            }
+            for fact in functional_requirements
+        ],
         "functional_requirements": [_as_prompt_fact(fact) for fact in functional_requirements],
         "non_functional_requirements": [
             _as_prompt_fact(fact) for fact in non_functional_requirements
@@ -153,6 +184,33 @@ def _prompt_facts(
         "assumptions": [_as_prompt_fact(fact) for fact in assumptions],
         "unknowns": [_as_prompt_fact(fact) for fact in unknowns],
     }
+    outcomes = [section for section in narrative_sections if section.evidence_kind != "context"]
+    context = [section for section in narrative_sections if section.evidence_kind == "context"]
+    if outcomes:
+        payload["narrative_sections"] = [_narrative_prompt_fact(section) for section in outcomes]
+    if context:
+        payload["narrative_context"] = [_narrative_prompt_fact(section) for section in context]
+    if narrative_sections and len(request.text) > _REQUEST_PROMPT_TEXT_LIMIT:
+        payload["request"] = {
+            "json_path": "$.user_request",
+            "character_count": len(request.text),
+            "full_text_omitted_from_prompt": True,
+            "note": (
+                "The full request is retained for validation. Labelled sections appear once "
+                "as exact excerpts in narrative_sections and narrative_context. Do not invent "
+                "json paths or treat those excerpts as structured requirements."
+            ),
+        }
+    headings = parse_labeled_request_outcomes(request.text)
+    if headings:
+        payload["labeled_request_outcomes"] = [
+            {
+                "label": item.label,
+                "title": item.title,
+                "source": "heading inside $.user_request; not an independently addressable json_path",
+            }
+            for item in headings
+        ]
     executive = original.get("executive_summary")
     if isinstance(executive, str) and executive.strip():
         payload["executive_summary"] = {

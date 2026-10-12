@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -37,6 +38,23 @@ class FindingCode(str, Enum):
     OVER_DECOMPOSITION = "OVER_DECOMPOSITION"
     OVERLAPPING_STORY_RESPONSIBILITY = "OVERLAPPING_STORY_RESPONSIBILITY"
     DUPLICATE_ACCEPTANCE_CRITERION = "DUPLICATE_ACCEPTANCE_CRITERION"
+    UNCOVERED_REQUEST_OUTCOME = "UNCOVERED_REQUEST_OUTCOME"
+    FEATURE_CHILD_MISALIGNMENT = "FEATURE_CHILD_MISALIGNMENT"
+
+
+class LlmCallDiagnostic(BaseModel):
+    """Observable LLM call outcome. Does not include prompts, payloads, or secrets."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    kind: Literal["initial", "hard_repair", "quality_repair"]
+    usable_proposal: bool
+    validation_passed: bool
+    accepted: bool
+    validation_errors: list[str] = Field(default_factory=list)
+    item_counts: dict[str, int] = Field(default_factory=dict)
+    covered_fr_paths: list[str] = Field(default_factory=list)
+    lost_fr_paths: list[str] = Field(default_factory=list)
 
 
 class Finding(BaseModel):
@@ -55,3 +73,4 @@ class GenerationFindings(BaseModel):
 
     contract_id: str = Field(default=GENERATION_FINDINGS_V1, frozen=True)
     items: list[Finding] = Field(default_factory=list)
+    llm_calls: list[LlmCallDiagnostic] = Field(default_factory=list)

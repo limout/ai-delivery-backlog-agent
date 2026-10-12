@@ -87,7 +87,11 @@ class _FindingSink:
         self.scope_conflict_texts: set[str] = set()
 
     def add(self, finding: Finding) -> None:
-        key = (finding.code, tuple(sorted(ref.json_path for ref in finding.source_references)))
+        key = (
+            finding.code,
+            finding.message,
+            tuple(sorted(ref.json_path for ref in finding.source_references)),
+        )
         if key in self._seen:
             return
         self._seen.add(key)
