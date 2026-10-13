@@ -19,6 +19,20 @@ _TIMELINE_OR_ESTIMATE = (
     "estimate",
 )
 
+_DELIVERY_PROCESS_CONSTRAINT = (
+    "released incrementally",
+    "incremental release",
+    "incrementally rather",
+    "phased delivery",
+    "phased release",
+    "one large final delivery",
+    "big bang",
+    "big-bang",
+    "single final release",
+    "iterative delivery",
+    "not a single release",
+)
+
 
 @dataclass(frozen=True)
 class SourceFact:
@@ -54,6 +68,13 @@ class NormalizedProjectSource:
 def looks_like_timeline_or_estimate(text: str) -> bool:
     normalized = normalize_source_text(text)
     return any(token in normalized for token in _TIMELINE_OR_ESTIMATE)
+
+
+def looks_like_delivery_process_constraint(text: str) -> bool:
+    """True for cross-cutting release-process constraints, not product capabilities."""
+
+    normalized = normalize_source_text(text)
+    return any(token in normalized for token in _DELIVERY_PROCESS_CONSTRAINT)
 
 
 def scope_line_applies(source_text: str, scope_line: str) -> bool:

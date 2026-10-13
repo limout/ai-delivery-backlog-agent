@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from backlog_agent.contracts.copilot_workflow_response_v1 import CopilotWorkflowResponseV1
 from backlog_agent.source import load_project_source
-from backlog_agent.source.model import classify_claim
+from backlog_agent.source.model import classify_claim, looks_like_delivery_process_constraint
 from tests.copilot_envelopes import library_holds_envelope
 from tests.test_decompose_confirmed_facts import campus_self_service_envelope
 
@@ -34,6 +34,15 @@ def test_unresolved_dependency_wording_stays_unresolved() -> None:
     dependency = source.blocking_dependencies[0]
     assert classify_claim(dependency.text, source, skip_path=dependency.json_path) == "unresolved"
     assert source.prompt_facts["blocking_dependencies"][0]["evidence_status"] == "unresolved"
+
+
+def test_incremental_release_is_a_delivery_process_constraint() -> None:
+    assert looks_like_delivery_process_constraint(
+        "The system shall be released incrementally rather than in one large final delivery."
+    )
+    assert not looks_like_delivery_process_constraint(
+        "Payment data in transit must be encrypted."
+    )
 
 
 def test_contradictory_access_statements_are_conflict() -> None:

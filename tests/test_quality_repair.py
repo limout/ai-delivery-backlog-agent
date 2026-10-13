@@ -97,6 +97,7 @@ def test_quality_repair_keeps_first_valid_tree_if_second_fails_validation() -> N
     assert findings.llm_calls[1].accepted is False
     assert findings.llm_calls[1].validation_errors
     assert all("Normalized project facts" not in error for error in findings.llm_calls[1].validation_errors)
+    assert any(item.code is FindingCode.QUALITY_REPAIR_REJECTED for item in findings.items)
 
 
 def test_quality_repair_does_not_fail_when_warnings_remain() -> None:

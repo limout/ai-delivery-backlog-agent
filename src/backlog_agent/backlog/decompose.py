@@ -55,6 +55,7 @@ from backlog_agent.source.model import (
     classify_claim,
     classify_scope,
     fact_texts,
+    looks_like_delivery_process_constraint,
     looks_like_timeline_or_estimate,
 )
 from backlog_agent.source.request_headings import (
@@ -79,6 +80,7 @@ _QUALITY_REPAIR_CODES = frozenset(
         FindingCode.OVERLAPPING_STORY_RESPONSIBILITY,
         FindingCode.DUPLICATE_ACCEPTANCE_CRITERION,
         FindingCode.UNCOVERED_NON_FUNCTIONAL_REQUIREMENT,
+        FindingCode.FEATURE_CHILD_MISALIGNMENT,
     }
 )
 
@@ -156,7 +158,12 @@ def decompose_backlog(
             if second.ok:
                 _mark_accepted(calls, "quality_repair")
                 return _accepted(second, calls)
+            recovered = _recover_quality_repair(source, second)
+            if recovered is not None:
+                _mark_accepted(calls, "quality_repair")
+                return _accepted(recovered, calls)
             _record_lost_fr_paths(calls, result.proposal, second.proposal)
+            _record_quality_repair_rejected(result, second)
             _mark_accepted(calls, "initial")
             return _accepted(result, calls)
         _mark_accepted(calls, "initial")
@@ -229,6 +236,8 @@ def _try_materialize(source: NormalizedProjectSource, raw: Mapping[str, Any]) ->
     errors.extend(_structural_errors(proposal))
     errors.extend(_provenance_and_scope_errors(source, proposal, findings))
     errors.extend(_execution_quality_errors(source, proposal))
+    if not errors:
+        _relocate_cross_cutting_constraints(source, proposal)
     if errors:
         return _MaterializeResult(ok=False, errors=errors, findings=findings, proposal=proposal)
 
@@ -1092,12 +1101,15 @@ def _record_requirement_coverage_findings(
     findings: _FindingSink,
 ) -> None:
     for fact in source.non_functional_requirements:
-        if fact.is_timeline_or_estimate:
+        if fact.is_timeline_or_estimate or looks_like_delivery_process_constraint(fact.text):
             findings.add(
                 Finding(
                     severity=FindingSeverity.INFO,
                     code=FindingCode.PLANNING_CONSTRAINT,
-                    message="Timeline or estimate constraint is not a committed backlog item.",
+                    message=(
+                        "Timeline, estimate, or cross-cutting delivery-process constraint is not "
+                        "a committed backlog item and must not be copied onto every story."
+                    ),
                     source_references=[
                         _source_ref(fact.json_path, fact.field_name, excerpt=fact.text)
                     ],
@@ -1190,22 +1202,28 @@ def _build_prompt(source: NormalizedProjectSource) -> str:
         "on an existing item that implements or verifies that constraint, alongside a functional "
         "requirement when the item is a user_story. A story that only discusses the idea is not "
         "coverage. Do not create a user_story whose provenance contains a non-functional "
-        "requirement path but no functional requirement path. Constraints such as not replacing "
-        "an existing system, or an external system remaining the source of truth, belong on the "
-        "FR-backed story that is bound by them.\n\n"
+        "requirement path but no functional requirement path. Attach an NFR to a story only when "
+        "that constraint applies to that story's outcome. Cross-cutting delivery-process "
+        "constraints such as incremental or phased release belong on the Epic, not on every Story. "
+        "Constraints such as not replacing an existing system, or an external system remaining "
+        "the source of truth, belong on the FR-backed story that is bound by them.\n\n"
         "Product tree:\n"
         "- One concise Epic title. Do not paste the entire request as the title.\n"
         "- Features are in-scope product capabilities. Do not copy delivery workstreams into Features. "
         "Group stories whose outcomes the feature title and description actually describe. Cite "
         "provenance for a source capability that supports that group. A child does not have to repeat "
-        "the feature's wording. Do not create extra features to reach a count. Do not place "
-        "authentication, policy review, renewal submission, external-system integration, and "
-        "confirmation under one feature when the cited excerpt covers only one of those outcomes.\n"
+        "the feature's wording. Do not create extra features to reach a count. When several "
+        "functional requirements describe distinct capability areas, keep those areas as separate "
+        "features. Do not collapse them into one catch-all feature whose title is only an actor, "
+        "management, core, platform, or capabilities label. Integration stories belong with the "
+        "capability they serve, or in their own feature when the source treats that integration as "
+        "a separate capability.\n"
         "- Every item in required_functional_coverage needs its own user_story whose provenance "
         "json_path and excerpt equal that entry. The initial proposal is invalid if any path is "
         "missing. A narrative section does not cover a functional requirement. Never place two "
-        "distinct functional-requirement paths on one user_story. A story may also cite related "
-        "NFR, acceptance-criterion, and narrative excerpts.\n"
+        "distinct functional-requirement paths on one user_story. A story may also cite the "
+        "acceptance criterion that verifies its outcome and an NFR that actually constrains that "
+        "outcome. Do not attach a global delivery NFR to every story merely because it exists.\n"
         "- Story descriptions must explain actor, behaviour, and outcome. Do not restate the title.\n"
         "- Bind each source acceptance criterion to the single story whose outcome that criterion "
         "actually verifies, and mark acceptance_criteria_origins as source. Do not attach a source "
@@ -1238,6 +1256,9 @@ def _build_prompt(source: NormalizedProjectSource) -> str:
         "testing, operational, or investigation work. Do not force a Task under every Story and do "
         "not require any minimum number of Tasks, Features, or Stories. If the Story is already an "
         "atomic implementable slice and no checkable unknown applies, leave it without child tasks. "
+        "When a story names an external integration, mapping, or verification that the source "
+        "supports as distinct work, add bounded implementation or verification tasks with "
+        "observable results. Do not invent endpoints, payloads, or provider behavior. "
         "Add an investigation task when a source unknown, open question, or unresolved blocking "
         "dependency names a verifiable objective that is not already established elsewhere in the "
         "source, for example confirming whether API documentation is available and complete when "
@@ -1439,6 +1460,128 @@ def _mark_accepted(calls: list[LlmCallDiagnostic], kind: str) -> None:
             return
 
 
+def _error_owner(error: str) -> str:
+    return error.split(":", 1)[0].split(".", 1)[0].strip()
+
+
+def _relocate_cross_cutting_constraints(
+    source: NormalizedProjectSource, proposal: BacklogProposal
+) -> None:
+    """Move delivery-process NFRs from stories onto the Epic. Does not drop FR coverage."""
+
+    process_paths = {
+        fact.json_path
+        for fact in source.non_functional_requirements
+        if looks_like_delivery_process_constraint(fact.text)
+    }
+    if not process_paths:
+        return
+    epics = [item for item in proposal.items if item.type is WorkItemType.EPIC]
+    moved: list[Any] = []
+    for item in proposal.items:
+        if item.type is WorkItemType.EPIC:
+            continue
+        keep = [ref for ref in item.provenance if ref.json_path not in process_paths]
+        if keep and len(keep) < len(item.provenance):
+            moved.extend(ref for ref in item.provenance if ref.json_path in process_paths)
+            item.provenance = keep
+    if not epics or not moved:
+        return
+    seen = {ref.json_path for ref in epics[0].provenance}
+    for reference in moved:
+        if reference.json_path in seen:
+            continue
+        epics[0].provenance.append(reference)
+        seen.add(reference.json_path)
+
+
+def _recover_quality_repair(
+    source: NormalizedProjectSource, second: _MaterializeResult
+) -> _MaterializeResult | None:
+    """Keep a repaired tree when only new Tasks failed validation. Never merge two trees."""
+
+    if second.ok or second.proposal is None:
+        return None
+    task_ids = {
+        item.local_id
+        for item in second.proposal.items
+        if item.type in {WorkItemType.TASK, WorkItemType.SUBTASK}
+    }
+    bad_tasks: set[str] = set()
+    for error in second.errors:
+        owner = _error_owner(error)
+        if owner in task_ids:
+            bad_tasks.add(owner)
+        else:
+            return None
+    if not bad_tasks:
+        return None
+    drop = set(bad_tasks)
+    raw = second.proposal.model_dump(mode="json")
+    changed = True
+    while changed:
+        changed = False
+        for item in raw.get("items") or []:
+            local_id = str(item.get("local_id") or "")
+            parent = item.get("parent_local_id")
+            if local_id in drop or parent not in drop:
+                continue
+            drop.add(local_id)
+            changed = True
+    raw["items"] = [
+        item
+        for item in raw.get("items") or []
+        if str(item.get("local_id") or "") not in drop
+    ]
+    for item in raw["items"]:
+        item["depends_on_local_ids"] = [
+            dep for dep in item.get("depends_on_local_ids") or [] if dep not in drop
+        ]
+    recovered = _try_materialize(source, raw)
+    if not recovered.ok:
+        return None
+    initial_fr = set(_covered_fr_paths(second.proposal))
+    if not initial_fr <= set(_covered_fr_paths(recovered.proposal)):
+        return None
+    dropped: list[str] = []
+    for local_id in sorted(bad_tasks):
+        title = next(
+            (item.title for item in second.proposal.items if item.local_id == local_id),
+            local_id,
+        )
+        dropped.append(title)
+    recovered.findings.add(
+        Finding(
+            severity=FindingSeverity.INFO,
+            code=FindingCode.QUALITY_REPAIR_REJECTED,
+            message=(
+                "Quality repair included invalid tasks that were dropped without discarding the "
+                f"remaining repaired tree: {', '.join(repr(title) for title in dropped[:8])}. "
+                "The initial and repaired trees were not merged."
+            ),
+        )
+    )
+    return recovered
+
+
+def _record_quality_repair_rejected(
+    initial: _MaterializeResult, second: _MaterializeResult
+) -> None:
+    reasons = _public_validation_errors(second.errors)[:5]
+    summary = "; ".join(reasons) if reasons else "validation failed"
+    initial.findings.add(
+        Finding(
+            severity=FindingSeverity.WARNING,
+            code=FindingCode.QUALITY_REPAIR_REJECTED,
+            message=(
+                "Quality repair was rejected; the initial valid proposal was kept. "
+                f"Repair failed because: {summary}. Remaining quality findings were not silently "
+                "cleared; they still describe the accepted tree."
+            ),
+        )
+    )
+
+
 def _accepted(result: _MaterializeResult, calls: list[LlmCallDiagnostic]) -> tuple[CanonicalBacklogV1, GenerationFindings]:
     assert result.backlog is not None
     return result.backlog, GenerationFindings(items=result.findings.items, llm_calls=calls)
@@ -1572,11 +1715,14 @@ def _build_quality_repair_prompt(
         "support, audit fields, retention periods, source paths, or quotations. Do not add stories "
         "or tasks merely to increase the count.\n"
         "- A feature groups stories that implement the capability in its title and description. "
-        "Its provenance must support that capability. A child may use different wording. Move stories "
-        "that implement a different source capability, including authentication, submission, "
-        "integration, or confirmation when the feature excerpt covers only review. Do not add "
-        "features to reach a count. title_origin=source only when the title equals a provenance "
-        "excerpt; a paraphrase is generated.\n"
+        "Its provenance must support that capability. A child may use different wording. When "
+        "child stories implement distinct source capabilities, split them into separate features "
+        "instead of one catch-all. Do not add features to reach a count. title_origin=source only "
+        "when the title equals a provenance excerpt; a paraphrase is generated.\n"
+        "- If a finding names missing implementation detail on an integration or verification "
+        "story, add concrete child tasks the source supports. Do not add a task that only "
+        "investigates whether an established source fact is true.\n"
+        "- Attach delivery-process NFRs to the Epic. Do not copy them onto every Story.\n"
         "- Treat non-functional requirements as constraints on relevant work, not "
         "automatically as separate technical stories. Never add a user_story whose only "
         "requirement provenance is a non-functional requirement; attach that exact path and "
@@ -1735,10 +1881,9 @@ def _build_repair_prompt(
         "paraphrase is title_origin=generated and keeps the real excerpt. Correct that validation "
         "error by setting generated. Do not rewrite the title into the full source sentence, and "
         "do not drop features or investigation tasks to make the origin check pass.\n"
-        "- Keep feature groupings that match a source capability. Do not collapse authentication, "
-        "review, submission, integration, and confirmation into one feature whose provenance excerpt "
-        "covers only one of those outcomes. Different wording between a feature and a child is fine "
-        "when they implement the same capability.\n"
+        "- Keep feature groupings that match a source capability. Do not collapse distinct "
+        "capability areas into one catch-all feature. Different wording between a feature and a "
+        "child is fine when they implement the same capability.\n"
         "- Preserve each grounded investigation task listed below when its unknown, open question, "
         "or dependency is still unresolved or conflicting. Do not add investigation tasks the "
         "source does not support, do not confirm established facts, and do not require a task "

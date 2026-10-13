@@ -160,3 +160,72 @@ def warehouse_picking_envelope() -> dict[str, Any]:
             "dependencies": ["Barcode symbology for existing bins is unconfirmed."],
         },
     )
+
+
+def customer_portal_nine_outcomes_envelope() -> dict[str, Any]:
+    """Nine independently testable outcomes spanning distinct capability areas."""
+
+    return _complete(
+        user_request=(
+            "Build a customer self-service portal. API access and technical documentation "
+            "for the records system and the payments processor are available. Release the "
+            "system incrementally rather than in one large final delivery."
+        ),
+        executive_summary="Customers manage accounts, orders, service requests, and payments.",
+        requirements={
+            "functional_requirements": [
+                "The system shall authenticate customers using the existing identity provider.",
+                "The system shall let a customer update their profile contact details.",
+                "The system shall let a customer place and view product orders.",
+                "The system shall let a customer submit a service request.",
+                "The system shall let a customer pay an outstanding balance.",
+                "The system shall notify a customer when an order or request status changes.",
+                "The system shall exchange customer and order records with the existing SAP system.",
+                "The system shall process card payments through the existing Stripe account.",
+                "The system shall let a customer view the status of submitted orders and service requests.",
+            ],
+            "acceptance_criteria": [
+                "Given valid credentials, when the customer signs in, then protected account pages are available.",
+                "Given a saved profile, when the customer changes a contact detail, then the updated detail is shown.",
+                "Given an in-stock product, when the customer places an order, then the order is listed.",
+                "Given a described issue, when the customer submits a service request, then a request identifier is shown.",
+                "Given an outstanding balance, when the customer pays, then the balance is reduced.",
+                "Given a status change, when the records system reports it, then the customer is notified.",
+                "Given a new order, when records are exchanged with SAP, then the order is stored in SAP.",
+                "Given a card payment, when Stripe confirms settlement, then the payment is recorded.",
+                "Given a submitted order or service request, when the customer opens status, then the current status is shown.",
+            ],
+            "non_functional_requirements": [
+                "The system shall be released incrementally rather than in one large final delivery.",
+                "Payment data in transit must be encrypted.",
+            ],
+            "open_questions": [
+                "The field mapping for service-request priority codes in SAP is unspecified."
+            ],
+        },
+        solution={
+            "key_capabilities": [
+                "Customer authentication and profile",
+                "Orders and service requests",
+                "Payments and notifications",
+            ]
+        },
+        delivery_plan={
+            "delivery_phases": ["Build"],
+            "workstreams": ["Customer experience"],
+            "milestones": ["Portal MVP"],
+            "dependencies": [
+                "Access to the SAP API and technical documentation",
+                "Access to the Stripe API and technical documentation",
+            ],
+        },
+        sow={
+            "in_scope": [
+                "Authentication and profile",
+                "Orders and service requests",
+                "Payments and notifications",
+            ],
+            "out_of_scope": ["Call-center workforce scheduling"],
+            "deliverables": ["Customer portal MVP"],
+        },
+    )

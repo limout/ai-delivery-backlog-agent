@@ -381,7 +381,7 @@ def record_granularity_findings(
     local_id_by_canonical = _local_id_by_canonical(backlog, proposal)
     by_id = {item.canonical_id: item for item in backlog.items}
     _record_cross_story_findings(list(backlog.items), findings, local_id_by_canonical)
-    _record_feature_child_alignment(list(backlog.items), findings)
+    _record_feature_child_alignment(_source, list(backlog.items), findings)
     for item in backlog.items:
         if item.type is WorkItemType.USER_STORY:
             _record_story_granularity(item, by_id, findings)
@@ -427,20 +427,46 @@ def _user_stories(items: list[Any]) -> list[Any]:
 
 
 _ALIGNMENT_GENERIC = _GENERIC_CONTEXT_WORDS | {
+    "access",
+    "application",
+    "capabilities",
+    "capability",
+    "common",
+    "core",
+    "customer",
+    "customers",
     "data",
+    "enablement",
+    "experience",
+    "functionality",
+    "functions",
+    "general",
     "information",
     "item",
     "items",
+    "journey",
+    "management",
+    "miscellaneous",
+    "module",
+    "operations",
+    "overall",
+    "platform",
     "policies",
     "policy",
+    "process",
+    "processes",
+    "product",
     "record",
     "records",
     "request",
     "requests",
     "service",
     "services",
+    "shared",
+    "solution",
     "system",
     "systems",
+    "workflow",
 }
 
 
@@ -456,7 +482,7 @@ def _alignment_tokens(text: str) -> set[str]:
     stemmed: set[str] = set()
     for raw in normalize_source_text(text).split():
         token = _stem_token(raw.strip(".,;:!?\"'`()[]{}"))
-        if len(token) >= 4 and token not in _ALIGNMENT_GENERIC:
+        if len(token) >= 3 and token not in _ALIGNMENT_GENERIC:
             stemmed.add(token)
     return stemmed
 
@@ -471,6 +497,10 @@ def _alignment_tokens_related(left: str, right: str) -> bool:
     if extra == "al" and len(short) >= 5:
         return True
     if extra in {"ing", "ed", "ion", "tion", "ation", "es"} and len(short) >= 6:
+        return True
+    if extra in {"ment", "ements"} and len(short) >= 3:
+        return True
+    if extra in {"ication", "ications"} and len(short) >= 5:
         return True
     if extra == "s" and len(short) >= 4:
         return True
@@ -487,11 +517,77 @@ def _child_text(child: Any) -> str:
     return f"{getattr(child, 'title', '')} {getattr(child, 'description', '')}"
 
 
-def _record_feature_child_alignment(items: list[Any], findings: Any) -> None:
-    """Warn when a feature's stated scope or provenance does not fit its children.
+def _child_capability_tokens(child: Any) -> set[str]:
+    parts = [_child_text(child)]
+    for reference in list(getattr(child, "provenance", ()) or ()):
+        excerpt = getattr(reference, "excerpt", None) or ""
+        path = getattr(reference, "json_path", "") or ""
+        if excerpt and _is_functional_requirement_path(path):
+            parts.append(excerpt)
+    return _alignment_tokens(" ".join(parts))
 
-    Coherence uses the feature title and description. Provenance is checked
-    separately so a narrow source excerpt is not treated as the whole group.
+
+def _cluster_feature_children(children: list[Any]) -> list[list[Any]]:
+    clusters: list[list[Any]] = []
+    for child in children:
+        tokens = _child_capability_tokens(child)
+        assigned = None
+        for cluster in clusters:
+            if any(
+                _alignment_sets_share_term(tokens, _child_capability_tokens(member))
+                for member in cluster
+            ):
+                assigned = cluster
+                break
+        if assigned is None:
+            clusters.append([child])
+        else:
+            assigned.append(child)
+    return clusters
+
+
+def _unrelated_child_pair_ratio(children: list[Any]) -> float:
+    """Fraction of child pairs that share no distinctive capability terms."""
+
+    token_sets = [_child_capability_tokens(child) for child in children]
+    pairs = 0
+    unrelated = 0
+    for index, left in enumerate(token_sets):
+        for right in token_sets[index + 1 :]:
+            pairs += 1
+            if not _alignment_sets_share_term(left, right):
+                unrelated += 1
+    if pairs == 0:
+        return 0.0
+    return unrelated / pairs
+
+
+def _children_form_distinct_capability_clusters(children: list[Any]) -> list[list[Any]] | None:
+    """Return child clusters when they do not share one capability area.
+
+    Pairwise overlap among children is the cohesion signal. Listing every child
+    capability in the feature description does not create that overlap. A feature
+    whose children mostly share distinctive terms stays one capability even when
+    it mentions several implementation details. This is not a required feature count.
+    """
+
+    if len(children) < 4:
+        return None
+    if _unrelated_child_pair_ratio(children) <= 0.5:
+        return None
+    clusters = _cluster_feature_children(children)
+    if len(clusters) < 2:
+        clusters = [[child] for child in children]
+    return clusters
+
+
+def _record_feature_child_alignment(_source: Any, items: list[Any], findings: Any) -> None:
+    """Warn when a feature's children are not one capability area.
+
+    Child-to-child clustering is the cohesion signal. Title and description token
+    overlap cannot override distinct child clusters; enumerating those clusters in
+    the feature description is not evidence they belong together. Provenance is
+    checked separately so a narrow source excerpt is not treated as the whole group.
     Token overlap is a review heuristic, not a hard failure or a feature-count rule.
     """
 
@@ -505,6 +601,29 @@ def _record_feature_child_alignment(items: list[Any], findings: Any) -> None:
             if child_id in by_id and by_id[child_id].type is WorkItemType.USER_STORY
         ]
         if not children:
+            continue
+        distinct_clusters = _children_form_distinct_capability_clusters(children)
+        if distinct_clusters is not None:
+            cluster_titles = "; ".join(
+                ", ".join(repr(child.title) for child in cluster[:3])
+                for cluster in distinct_clusters[:4]
+            )
+            findings.add(
+                Finding(
+                    severity=FindingSeverity.WARNING,
+                    code=FindingCode.FEATURE_CHILD_MISALIGNMENT,
+                    message=(
+                        f"Feature {feature.title!r} groups {len(children)} stories that form "
+                        f"{len(distinct_clusters)} distinct capability clusters ({cluster_titles}). "
+                        "Listing those areas in the feature description does not make them one "
+                        "capability. Move related stories under features whose titles describe "
+                        "those areas. This is a heuristic, not a hard failure and not a "
+                        "requirement to add extra features."
+                    ),
+                    canonical_ids=[feature.canonical_id, *[child.canonical_id for child in children]],
+                    source_references=list(getattr(feature, "provenance", ()) or ()),
+                )
+            )
             continue
         excerpt = ""
         for reference in list(getattr(feature, "provenance", ()) or ()):

@@ -500,8 +500,55 @@ def test_feature_provenance_that_covers_only_a_minority_warns() -> None:
         item for item in sink.items if item.code is FindingCode.FEATURE_CHILD_MISALIGNMENT
     ]
     assert misaligned
-    assert "1 of 4" in misaligned[0].message
     assert "heuristic" in misaligned[0].message.lower()
+    assert (
+        "1 of 4" in misaligned[0].message
+        or "distinct capability clusters" in misaligned[0].message
+    )
+
+
+def test_cohesive_feature_with_several_related_stories_is_not_flagged() -> None:
+    children = [
+        _story(
+            "cbl_title",
+            "Search Holdings by Title",
+            description="A member searches the catalog by title and matching holdings are listed.",
+        ),
+        _story(
+            "cbl_author",
+            "Search Holdings by Author",
+            description="A member searches the catalog by author and matching holdings are listed.",
+        ),
+        _story(
+            "cbl_filter",
+            "Filter Catalog Search Results",
+            description="A member filters catalog search results by format so matching holdings remain listed.",
+        ),
+        _story(
+            "cbl_empty",
+            "Show Empty Catalog Search Results",
+            description="A member sees an empty catalog search result when no holdings match.",
+        ),
+    ]
+    feature = SimpleNamespace(
+        type=WorkItemType.FEATURE,
+        canonical_id="cbl_feat_search",
+        title="Catalog search",
+        description="Search, filter, and present catalog holdings, including empty result handling.",
+        child_ids=tuple(child.canonical_id for child in children),
+        provenance=(_ref("$.solution.key_capabilities[0]", "Catalog search"),),
+        acceptance_criteria=[],
+        test_requirements=[],
+        parent_id=None,
+        dependencies=[],
+    )
+    sink = _Sink()
+    record_granularity_findings(
+        SimpleNamespace(),
+        SimpleNamespace(items=[feature, *children]),
+        sink,
+    )
+    assert FindingCode.FEATURE_CHILD_MISALIGNMENT not in _codes(sink)
 
 
 def test_broad_feature_spanning_auth_review_submit_integration_and_confirmation() -> None:
@@ -558,7 +605,12 @@ def test_broad_feature_spanning_auth_review_submit_integration_and_confirmation(
         SimpleNamespace(items=[feature, *children]),
         sink,
     )
-    assert FindingCode.FEATURE_CHILD_MISALIGNMENT not in _codes(sink)
+    misaligned = [
+        item for item in sink.items if item.code is FindingCode.FEATURE_CHILD_MISALIGNMENT
+    ]
+    assert misaligned
+    assert "distinct capability clusters" in misaligned[0].message
+    assert "listing those areas" in misaligned[0].message.lower()
 
 
 def test_coherent_feature_with_narrow_provenance_is_not_split() -> None:
