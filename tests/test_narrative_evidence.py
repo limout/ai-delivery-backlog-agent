@@ -13,6 +13,7 @@ from backlog_agent.findings.models import FindingCode
 from backlog_agent.llm.exceptions import DecompositionValidationError
 from backlog_agent.llm.mock import MockProvider
 from backlog_agent.source import load_project_source
+from backlog_agent.source.model import classify_claim
 from tests.copilot_envelopes import library_holds_envelope
 from tests.test_decompose_generic import _item, _library_proposal, _src
 
@@ -256,17 +257,32 @@ def _fixture_proposal(payload: dict, source) -> dict:
                 title_origin="generated",
             )
         )
-    unknown = source.unknowns[0]
-    items.append(
-        _item(
-            "task-api-docs",
-            "task",
-            "Confirm whether policy administration API documentation is available",
-            parent="story-fr-3",
-            provenance=[_src(unknown.json_path, unknown.field_name or "unknowns", unknown.text)],
-            title_origin="generated",
-        )
+    remaining = next(
+        (
+            fact
+            for fact in (*source.unknowns, *source.blocking_dependencies)
+            if classify_claim(fact.text, source, skip_path=fact.json_path) != "established"
+        ),
+        None,
     )
+    if remaining is not None:
+        items.append(
+            _item(
+                "task-remaining-detail",
+                "task",
+                f"Clarify remaining implementation detail: {remaining.text}",
+                parent="story-fr-3",
+                provenance=[
+                    _src(
+                        remaining.json_path,
+                        remaining.field_name or "unknowns",
+                        remaining.text,
+                    )
+                ],
+                title_origin="generated",
+                description="Resolve this remaining source detail for the parent story.",
+            )
+        )
     return {"items": items, "prerequisites": [], "uncertainties": []}
 
 

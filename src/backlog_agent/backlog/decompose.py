@@ -863,6 +863,11 @@ _EXISTENCE_CHECK = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_AVAILABILITY_NOUN = re.compile(
+    r"\b(available|availability|exists?|existence|access|granted|"
+    r"documentation|participate|participation|provided)\b",
+    re.IGNORECASE,
+)
 _REMAINING_DETAIL_TOKENS = frozenset(
     {
         "authentication",
@@ -1066,24 +1071,49 @@ def _attach_grounded_implementation_tasks(
     return injected
 
 
+def _task_is_existence_or_availability_check(text: str) -> bool:
+    if _EXISTENCE_CHECK.search(text):
+        return True
+    return bool(_VERIFY_VERB.search(text) and _AVAILABILITY_NOUN.search(text))
+
+
+def _related_statement_polarities(source: NormalizedProjectSource, text: str) -> set[str]:
+    polarities: set[str] = set()
+    for _path, statement in iter_source_statements(source):
+        polarity = statement_polarity(statement)
+        if polarity is None or not claims_are_related(text, statement):
+            continue
+        polarities.add(polarity)
+    return polarities
+
+
+def _task_has_unresolved_remaining_purpose(
+    source: NormalizedProjectSource,
+    item: ProposedItem,
+    cited: list[Any],
+) -> bool:
+    combined = f"{item.title} {item.description}"
+    extra_detail = bool(claim_content_tokens(combined) & _REMAINING_DETAIL_TOKENS)
+    if not extra_detail:
+        return False
+    for fact in cited:
+        if classify_claim(fact.text, source, skip_path=fact.json_path) != "unresolved":
+            continue
+        if not (claim_content_tokens(fact.text) & _REMAINING_DETAIL_TOKENS):
+            continue
+        if claims_are_related(fact.text, combined) or claims_are_related(combined, fact.text):
+            return True
+    return False
+
+
 def _task_confirms_established_fact(source: NormalizedProjectSource, item: ProposedItem) -> bool:
     combined = f"{item.title} {item.description}"
     cited = _cited_source_facts(source, item)
-    cited_statuses = {
-        classify_claim(fact.text, source, skip_path=fact.json_path) for fact in cited
-    }
-    if (
-        _VERIFY_VERB.search(combined)
-        and _EXISTENCE_CHECK.search(combined)
-        and (not cited or cited_statuses <= {"established"})
-    ):
-        polarities = {
-            statement_polarity(statement)
-            for _path, statement in iter_source_statements(source)
-            if claims_are_related(combined, statement) and statement_polarity(statement)
-        }
-        if polarities == {"established"}:
-            return True
+    if _task_is_existence_or_availability_check(combined):
+        if not _task_has_unresolved_remaining_purpose(source, item, cited):
+            polarities = _related_statement_polarities(source, combined)
+            if "established" in polarities and "unresolved" not in polarities:
+                return True
     task_tokens = claim_content_tokens(combined)
     extra_detail = bool(task_tokens & _REMAINING_DETAIL_TOKENS)
     for fact in cited:

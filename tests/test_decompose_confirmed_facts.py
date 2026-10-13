@@ -10,8 +10,8 @@ from backlog_agent.contracts.copilot_workflow_response_v1 import CopilotWorkflow
 from backlog_agent.findings.models import FindingCode
 from backlog_agent.llm.exceptions import DecompositionValidationError
 from backlog_agent.llm.mock import MockProvider
-from tests.copilot_envelopes import _complete, warehouse_picking_envelope
-from tests.test_decompose_generic import _item, _src, _warehouse_proposal
+from tests.copilot_envelopes import _complete, library_holds_envelope, warehouse_picking_envelope
+from tests.test_decompose_generic import _item, _library_proposal, _src, _warehouse_proposal
 
 
 def campus_self_service_envelope(*, contradict_access: bool = False) -> dict:
@@ -247,6 +247,61 @@ def test_investigation_of_established_access_is_rejected_without_citing_the_depe
             ],
             title_origin="generated",
             description="Confirm that API access and technical documentation are available.",
+        )
+    )
+    with pytest.raises(DecompositionValidationError) as exc:
+        decompose_backlog(
+            CopilotWorkflowResponseV1.model_validate(payload),
+            MockProvider(proposal),
+            repair=False,
+        )
+    assert any("confirm an established source fact" in error for error in exc.value.errors)
+
+
+def test_existence_check_citing_only_a_dependency_uses_request_facts() -> None:
+    payload = campus_self_service_envelope()
+    proposal = _campus_proposal(payload, sandbox_task=False)
+    dependency = payload["delivery_plan"]["dependencies"][0]
+    proposal["items"].append(
+        _item(
+            "task-exist-dep",
+            "task",
+            "Verify that API access and technical documentation are available",
+            parent="story-submit",
+            provenance=[_src("$.delivery_plan.dependencies[0]", "dependencies", dependency)],
+            title_origin="generated",
+            description="Confirm that API access and documentation are available.",
+        )
+    )
+    with pytest.raises(DecompositionValidationError) as exc:
+        decompose_backlog(
+            CopilotWorkflowResponseV1.model_validate(payload),
+            MockProvider(proposal),
+            repair=False,
+        )
+    assert any("confirm an established source fact" in error for error in exc.value.errors)
+
+
+def test_library_confirmed_feed_access_rejects_availability_task() -> None:
+    payload = copy.deepcopy(library_holds_envelope())
+    payload["user_request"] = (
+        payload["user_request"]
+        + " Bibliographic feed documentation and API access are available."
+    )
+    payload["delivery_plan"]["dependencies"] = [
+        "Access to the bibliographic vendor MARC feed and technical documentation"
+    ]
+    proposal = _library_proposal()
+    fr = payload["requirements"]["functional_requirements"][0]
+    proposal["items"].append(
+        _item(
+            "task-feed-docs",
+            "task",
+            "Check whether bibliographic documentation is available",
+            parent="story-search",
+            provenance=[_src("$.requirements.functional_requirements[0]", "functional_requirements", fr)],
+            title_origin="generated",
+            description="Verify whether API access and documentation are available.",
         )
     )
     with pytest.raises(DecompositionValidationError) as exc:
