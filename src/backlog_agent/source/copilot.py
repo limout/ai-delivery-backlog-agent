@@ -10,6 +10,7 @@ from backlog_agent.contracts.versions import COPILOT_WORKFLOW_RESPONSE_V1
 from backlog_agent.source.model import (
     NormalizedProjectSource,
     SourceFact,
+    annotate_prompt_evidence_status,
     looks_like_timeline_or_estimate,
 )
 from backlog_agent.source.request_headings import (
@@ -65,7 +66,7 @@ def from_copilot(envelope: CopilotWorkflowResponseV1) -> NormalizedProjectSource
         + _facts(original, "$.requirements.open_questions", "open_questions")
     )
     narrative_sections = parse_narrative_sections(request_text)
-    return NormalizedProjectSource(
+    source = NormalizedProjectSource(
         contract_id=COPILOT_WORKFLOW_RESPONSE_V1,
         original=original,
         allowed_path_prefixes=_ALLOWED_PREFIXES,
@@ -99,6 +100,8 @@ def from_copilot(envelope: CopilotWorkflowResponseV1) -> NormalizedProjectSource
             narrative_sections=narrative_sections,
         ),
     )
+    annotate_prompt_evidence_status(source)
+    return source
 
 
 def _facts(original: Mapping[str, Any], path: str, field_name: str) -> tuple[SourceFact, ...]:

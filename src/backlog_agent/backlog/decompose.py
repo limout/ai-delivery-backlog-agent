@@ -50,6 +50,9 @@ from backlog_agent.llm.provider import AIProvider
 from backlog_agent.source import load_project_source
 from backlog_agent.source.model import (
     NormalizedProjectSource,
+    claim_content_tokens,
+    claims_are_related,
+    classify_claim,
     classify_scope,
     fact_texts,
     looks_like_timeline_or_estimate,
@@ -165,7 +168,7 @@ def decompose_backlog(
             provider, repair_prompt, schema, source, calls, "hard_repair"
         )
         if second.ok:
-            _note_dropped_grounded_tasks(raw, second)
+            _note_dropped_grounded_tasks(source, raw, second)
             _mark_accepted(calls, "hard_repair")
             return _accepted(second, calls)
         _record_lost_fr_paths(calls, result.proposal, second.proposal)
@@ -251,7 +254,7 @@ def _try_materialize(source: NormalizedProjectSource, raw: Mapping[str, Any]) ->
 
     _record_generated_content(source, proposal, backlog, findings)
     _record_uncertainties(proposal, backlog, findings)
-    _record_prerequisites(proposal, findings)
+    _record_prerequisites(source, proposal, findings)
     _record_requirement_coverage_findings(source, backlog.items, findings)
     record_granularity_findings(source, backlog, findings, proposal=proposal)
     _record_uncovered_request_outcomes(source, backlog, findings, proposal)
@@ -633,8 +636,21 @@ def _execution_quality_errors(source: NormalizedProjectSource, proposal: Backlog
                     f"{item.local_id}: delivery workstreams must not be copied as tasks"
                 )
             if normalized in blocking:
+                status = classify_claim(item.title, source)
+                if status == "established":
+                    errors.append(
+                        f"{item.local_id}: do not add a task whose purpose is to confirm an "
+                        "established source fact"
+                    )
+                else:
+                    errors.append(
+                        f"{item.local_id}: source blocking dependency must be an unresolved "
+                        "prerequisite, not an implementation task"
+                    )
+            elif _task_confirms_established_fact(source, item):
                 errors.append(
-                    f"{item.local_id}: source blocking dependency must be an unresolved prerequisite, not an implementation task"
+                    f"{item.local_id}: do not add a task whose purpose is to confirm an "
+                    "established source fact"
                 )
             owner = seen_task_titles.get(normalized)
             if owner is not None:
@@ -816,8 +832,91 @@ def _record_generated_content(
         )
 
 
-def _record_prerequisites(proposal: BacklogProposal, findings: _FindingSink) -> None:
+_VERIFY_VERB = re.compile(
+    r"\b(investigate|confirm|verify|check|determine|validate|assess|discover)\b",
+    re.IGNORECASE,
+)
+_EXISTENCE_CHECK = re.compile(
+    r"\b(whether|if)\b.{0,80}\b("
+    r"available|availability|exists?|existence|access|granted|"
+    r"documentation|participate|participation|provided"
+    r")\b",
+    re.IGNORECASE,
+)
+_REMAINING_DETAIL_TOKENS = frozenset(
+    {
+        "authentication",
+        "authorization",
+        "behavior",
+        "behaviour",
+        "capability",
+        "capabilities",
+        "credential",
+        "credentials",
+        "endpoint",
+        "environment",
+        "idempotency",
+        "mapping",
+        "oauth",
+        "payload",
+        "sandbox",
+        "schema",
+        "sso",
+        "token",
+        "webhook",
+    }
+)
+
+
+def _cited_source_facts(source: NormalizedProjectSource, item: ProposedItem) -> list[Any]:
+    by_path = {
+        fact.json_path: fact
+        for fact in (
+            *source.blocking_dependencies,
+            *source.unknowns,
+            *source.assumptions,
+        )
+    }
+    found: list[Any] = []
+    for reference in item.provenance:
+        fact = by_path.get(reference.json_path)
+        if fact is not None:
+            found.append(fact)
+    return found
+
+
+def _task_confirms_established_fact(source: NormalizedProjectSource, item: ProposedItem) -> bool:
+    combined = f"{item.title} {item.description}"
+    task_tokens = claim_content_tokens(combined)
+    extra_detail = bool(task_tokens & _REMAINING_DETAIL_TOKENS)
+    for fact in _cited_source_facts(source, item):
+        if classify_claim(fact.text, source, skip_path=fact.json_path) != "established":
+            continue
+        if extra_detail and not (claim_content_tokens(fact.text) & _REMAINING_DETAIL_TOKENS):
+            continue
+        if _VERIFY_VERB.search(combined) and (
+            _EXISTENCE_CHECK.search(combined) or claims_are_related(fact.text, item.title)
+        ):
+            return True
+        if (
+            claims_are_related(fact.text, item.title)
+            and claims_are_related(item.title, fact.text)
+            and not extra_detail
+        ):
+            return True
+    return False
+
+
+def _record_prerequisites(
+    source: NormalizedProjectSource, proposal: BacklogProposal, findings: _FindingSink
+) -> None:
     for prerequisite in proposal.prerequisites:
+        statuses = [
+            classify_claim(ref.excerpt or prerequisite.text, source, skip_path=ref.json_path)
+            for ref in prerequisite.provenance
+        ]
+        if statuses and all(status == "established" for status in statuses):
+            continue
         findings.add(
             Finding(
                 severity=FindingSeverity.WARNING,
@@ -1139,26 +1238,35 @@ def _build_prompt(source: NormalizedProjectSource) -> str:
         "testing, operational, or investigation work. Do not force a Task under every Story and do "
         "not require any minimum number of Tasks, Features, or Stories. If the Story is already an "
         "atomic implementable slice and no checkable unknown applies, leave it without child tasks. "
-        "Add an investigation task when a source unknown, open question, or blocking dependency names "
-        "a verifiable objective, for example confirming whether API documentation is available and "
-        "complete, verifying whether a sandbox or test environment is available, or determining "
-        "whether a documented status lookup or recovery from an uncertain outcome can be exercised "
-        "where documentation or an environment exists. Each investigation task needs a bounded "
-        "objective, a verifiable result such as available, incomplete, unavailable, or not yet "
-        "verifiable, and provenance equal to that unknown or dependency path and excerpt. State "
-        "that the capability is not confirmed. Do not treat an assumption as a verified capability. "
-        "Do not invent endpoints, idempotency support, schemas, databases, frameworks, "
-        "authentication protocols, or integration guarantees. Do not add generic filler such as "
-        "implement backend, do testing, or handle errors. If a question cannot yet be checked, "
-        "record an uncertainty or unresolved prerequisite instead. Zero tasks is valid.\n"
+        "Add an investigation task when a source unknown, open question, or unresolved blocking "
+        "dependency names a verifiable objective that is not already established elsewhere in the "
+        "source, for example confirming whether API documentation is available and complete when "
+        "the source does not already state that, verifying whether a sandbox or test environment "
+        "is available, or determining whether a documented status lookup or recovery from an "
+        "uncertain outcome can be exercised where documentation or an environment exists. Each "
+        "investigation task needs a bounded objective, a verifiable result such as available, "
+        "incomplete, unavailable, or not yet verifiable, and provenance equal to that unknown or "
+        "dependency path and excerpt. State that the capability is not confirmed. Do not add a "
+        "task whose purpose is to confirm that a fact exists, is available, or that named people "
+        "can participate when evidence_status is established. Confirmation of access or "
+        "documentation does not establish every capability, sandbox, authentication behavior, "
+        "schema, or integration detail; keep those remaining unknowns visible. Do not treat an "
+        "assumption as a verified capability. Do not invent endpoints, idempotency support, "
+        "schemas, databases, frameworks, authentication protocols, or integration guarantees. Do "
+        "not add generic filler such as implement backend, do testing, or handle errors. If a "
+        "question cannot yet be checked, record an uncertainty or unresolved prerequisite instead. "
+        "Zero tasks is valid.\n"
         "- Treat listed deliverables as inspiration for necessary work, not a 1:1 task dump.\n"
         "- Subtasks only when they add tracking value as independently completable slices. Do not copy "
         "every milestone or phase as a Subtask.\n"
         "- depends_on_local_ids only for a defensible blocking relationship (for example a confirmation "
         "step that cannot run until a submit step succeeds). Do not add dependencies to fill the tree.\n"
         "- Put unverified blocking conditions (external access, unfinalized staffing, unconfirmed "
-        "standards) in prerequisites with status unresolved. Do not create a task that claims those "
-        "conditions are already met.\n"
+        "standards) in prerequisites with status unresolved. Do not list a condition the source "
+        "already establishes unless a related statement contradicts it; keep genuine conflicts "
+        "visible. Do not create a task that claims unresolved conditions are already met. "
+        "blocking_dependencies.evidence_status is established, unresolved, or conflict; do not "
+        "treat every listed dependency as an unknown.\n"
         "- Honour in-scope and out-of-scope statements. Never create items for excluded work.\n"
         "- Do not invent effort, architecture decisions, or external approvals. Do not convert a "
         "timeline or estimate constraint into a committed milestone, date, or work item.\n"
@@ -1528,7 +1636,9 @@ def _repair_task_snapshot(previous: Mapping[str, Any]) -> list[dict[str, Any]]:
 _GROUNDED_TASK_PATH_MARKERS = ("unknown", "open_question", "dependencies", "discovery")
 
 
-def _note_dropped_grounded_tasks(previous: Mapping[str, Any], result: _MaterializeResult) -> None:
+def _note_dropped_grounded_tasks(
+    source: NormalizedProjectSource, previous: Mapping[str, Any], result: _MaterializeResult
+) -> None:
     """Warn when the only valid repair omits a source-backed investigation task.
 
     The initial tree is not spliced back in. The finding names the omitted task so
@@ -1556,6 +1666,16 @@ def _note_dropped_grounded_tasks(previous: Mapping[str, Any], result: _Materiali
             )
         ]
         if not grounded or any(str(reference.get("json_path") or "") in kept_paths for reference in grounded):
+            continue
+        if all(
+            classify_claim(
+                str(reference.get("excerpt") or ""),
+                source,
+                skip_path=str(reference.get("json_path") or "") or None,
+            )
+            == "established"
+            for reference in grounded
+        ):
             continue
         title = str(item.get("title") or "investigation task")
         result.findings.add(
@@ -1601,10 +1721,12 @@ def _build_repair_prompt(
         "- Attach each in-scope non-functional requirement's exact path and excerpt to an existing "
         "FR-backed item it constrains. Do not add a story that has only an NFR path.\n"
         "- Previous tasks are listed below. Preserve each task whose provenance cites an unknown, "
-        "open question, dependency, or discovery fact, or replace it with an equivalent task that "
-        "uses the same json_path and excerpt, a bounded objective, and an unconfirmed result. "
-        "Do not delete that task while fixing titles, story splits, or other errors. A generic "
-        "filler task may be removed. Do not invent endpoints or capabilities to replace it.\n"
+        "open question, unresolved or conflicting dependency, or discovery fact, or replace it "
+        "with an equivalent task that uses the same json_path and excerpt, a bounded objective, "
+        "and an unconfirmed result. Do not preserve a task whose only purpose is to confirm a fact "
+        "the source already establishes. Do not delete an unresolved investigation task while "
+        "fixing titles, story splits, or other errors. A generic filler task may be removed. Do "
+        "not invent endpoints or capabilities to replace it.\n"
         "- When a labelled section is narrative evidence, cite its exact $.user_request excerpt. "
         "Represent a testable outcome as a generated criterion or, when no structured requirement "
         "states it, a generated story. Record an uncertainty or investigation task when the section "
@@ -1618,8 +1740,9 @@ def _build_repair_prompt(
         "covers only one of those outcomes. Different wording between a feature and a child is fine "
         "when they implement the same capability.\n"
         "- Preserve each grounded investigation task listed below when its unknown, open question, "
-        "or dependency still applies. Do not add investigation tasks the source does not support, "
-        "and do not require a task under every story.\n"
+        "or dependency is still unresolved or conflicting. Do not add investigation tasks the "
+        "source does not support, do not confirm established facts, and do not require a task "
+        "under every story.\n"
         "- Feature provenance should describe the capability its child stories implement.\n"
         f"Validation errors:\n{listed}\n\n"
         f"Previous tasks to preserve or replace when they are evidence-supported:\n{tasks}\n\n"
