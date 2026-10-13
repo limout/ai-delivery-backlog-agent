@@ -44,7 +44,14 @@ class FindingCode(str, Enum):
 
 
 class LlmCallDiagnostic(BaseModel):
-    """Observable LLM call outcome. Does not include prompts, payloads, or secrets."""
+    """Observable LLM call outcome. Does not include prompts, payloads, or secrets.
+
+    ``validation_passed`` is the hard structural gate only. ``accepted`` is
+    stricter: the candidate passed hard validation, was selected as the returned
+    tree, and carries no blocking quality defect (see
+    ``backlog_agent.backlog.quality_gate``). ``blocking_quality_findings`` is the
+    number of such defects still present in this candidate.
+    """
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -52,6 +59,7 @@ class LlmCallDiagnostic(BaseModel):
     usable_proposal: bool
     validation_passed: bool
     accepted: bool
+    blocking_quality_findings: int = 0
     validation_errors: list[str] = Field(default_factory=list)
     item_counts: dict[str, int] = Field(default_factory=dict)
     covered_fr_paths: list[str] = Field(default_factory=list)

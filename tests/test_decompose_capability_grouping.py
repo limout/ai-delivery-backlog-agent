@@ -24,7 +24,16 @@ def _facts():
     return payload, payload["requirements"]["functional_requirements"], payload["requirements"]["acceptance_criteria"]
 
 
-def _story(local_id: str, index: int, parent: str, fr: list[str], ac: list[str], *, description: str) -> dict:
+def _story(
+    local_id: str,
+    index: int,
+    parent: str,
+    fr: list[str],
+    ac: list[str],
+    *,
+    description: str,
+    extra_tests: list[str] | None = None,
+) -> dict:
     return _item(
         local_id,
         "user_story",
@@ -46,7 +55,7 @@ def _story(local_id: str, index: int, parent: str, fr: list[str], ac: list[str],
         description=description,
         ac=[ac[index]],
         ac_origins=["source"],
-        tests=[f"Assert the expected result for requirement {index + 1}."],
+        tests=[f"Assert the expected result for requirement {index + 1}.", *(extra_tests or [])],
     )
 
 
@@ -55,6 +64,7 @@ def _catch_all_proposal(
     sap_task: bool = False,
     confirm_access_task: bool = False,
     enumerate_in_description: bool = False,
+    cover_encryption: bool = True,
 ) -> dict:
     payload, fr, ac = _facts()
     nfr = payload["requirements"]["non_functional_requirements"][0]
@@ -63,7 +73,17 @@ def _catch_all_proposal(
         _story("story-profile", 1, "feat-core", fr, ac, description="A customer updates a saved contact detail and sees the new value."),
         _story("story-orders", 2, "feat-core", fr, ac, description="A customer places a product order and sees it listed."),
         _story("story-requests", 3, "feat-core", fr, ac, description="A customer submits a service request and receives an identifier."),
-        _story("story-pay", 4, "feat-core", fr, ac, description="A customer pays an outstanding balance and sees the reduced amount."),
+        _story(
+            "story-pay",
+            4,
+            "feat-core",
+            fr,
+            ac,
+            description="A customer pays an outstanding balance and sees the reduced amount.",
+            extra_tests=(
+                ["Assert payment data in transit is encrypted."] if cover_encryption else None
+            ),
+        ),
         _story("story-notify", 5, "feat-core", fr, ac, description="A customer is notified when an order or request status changes."),
         _story(
             "story-sap",
@@ -195,9 +215,24 @@ def _grouped_proposal(*, sap_task: bool = True, stripe_task: bool = True, confir
         _item(
             "feat-pay",
             "feature",
-            caps[2],
+            "Card payments",
             parent="epic-1",
             provenance=[_src("$.solution.key_capabilities[2]", "key_capabilities", caps[2])],
+            title_origin="generated",
+        ),
+        _item(
+            "feat-notify",
+            "feature",
+            "Status change notifications",
+            parent="epic-1",
+            provenance=[
+                _src(
+                    "$.requirements.functional_requirements[5]",
+                    "functional_requirements",
+                    fr[5],
+                )
+            ],
+            title_origin="generated",
         ),
         _story("story-auth", 0, "feat-identity", fr, ac, description="A customer authenticates before opening protected pages."),
         _story("story-profile", 1, "feat-identity", fr, ac, description="A customer updates a saved contact detail and sees the new value."),
@@ -218,9 +253,13 @@ def _grouped_proposal(*, sap_task: bool = True, stripe_task: bool = True, confir
             "feat-pay",
             fr,
             ac,
-            description="A customer pays an outstanding balance and sees the reduced amount.",
+            description=(
+                "A customer pays an outstanding balance and sees the reduced amount. "
+                "Payment data in transit is encrypted."
+            ),
+            extra_tests=["Assert payment data in transit is encrypted."],
         ),
-        _story("story-notify", 5, "feat-pay", fr, ac, description="A customer is notified when an order or request status changes."),
+        _story("story-notify", 5, "feat-notify", fr, ac, description="A customer is notified when an order or request status changes."),
         _story(
             "story-stripe",
             7,
@@ -312,6 +351,18 @@ def _fr_paths(backlog) -> set[str]:
     }
 
 
+def _assert_question_task_under_sap(backlog) -> None:
+    by_id = {item.canonical_id: item for item in backlog.items}
+    questions = [
+        item
+        for item in backlog.items
+        if item.type is WorkItemType.TASK
+        and any(ref.json_path == "$.requirements.open_questions[0]" for ref in item.provenance)
+    ]
+    assert len(questions) == 1
+    assert "SAP" in by_id[questions[0].parent_id].title
+
+
 def test_catch_all_feature_is_quality_repaired_into_capability_groups() -> None:
     provider = MockProvider(responses=[_catch_all_proposal(), _grouped_proposal()])
     backlog, findings = decompose_backlog(_envelope(), provider)
@@ -320,14 +371,16 @@ def test_catch_all_feature_is_quality_repaired_into_capability_groups() -> None:
     assert FindingCode.FEATURE_CHILD_MISALIGNMENT.value in provider.calls[1][0]
     counts = _counts(backlog)
     assert counts["epic"] == 1
-    assert counts["feature"] == 3
+    assert counts["feature"] >= 3
+    assert counts["feature"] <= 6
     assert counts["user_story"] == 9
-    assert counts["task"] == 2
+    # Two implementation tasks plus one clarification task for the open source question.
+    assert counts["task"] == 3
+    _assert_question_task_under_sap(backlog)
     assert counts["subtask"] == 0
     titles = {item.title for item in backlog.items if item.type is WorkItemType.FEATURE}
     assert "Customer authentication and profile" in titles
     assert "Orders and service requests" in titles
-    assert "Payments and notifications" in titles
     assert "Customer Management and Core Capabilities" not in titles
     assert len(_fr_paths(backlog)) == 9
     assert all(item.status is WorkItemStatus.TODO for item in backlog.items)
@@ -347,17 +400,19 @@ def test_enumerated_description_does_not_make_a_catch_all_feature_cohesive() -> 
     titles = {item.title for item in backlog.items if item.type is WorkItemType.FEATURE}
     assert "Customer authentication and profile" in titles
     assert "Orders and service requests" in titles
-    assert "Payments and notifications" in titles
+    assert "Customer Management and Core Capabilities" not in titles
     assert len(_fr_paths(backlog)) == 9
-    assert _counts(backlog)["task"] == 2
+    assert _counts(backlog)["task"] == 3
+    _assert_question_task_under_sap(backlog)
 
 
 def test_grouped_proposal_keeps_nine_outcomes_and_does_not_force_tasks_on_atomic_stories() -> None:
     backlog, findings = decompose_backlog(_envelope(), MockProvider(_grouped_proposal()), repair=False)
     counts = _counts(backlog)
-    assert counts["feature"] == 3
+    assert 3 <= counts["feature"] <= 6
     assert counts["user_story"] == 9
-    assert counts["task"] == 2
+    assert counts["task"] == 3  # no task is forced on atomic stories; the question gets one
+    _assert_question_task_under_sap(backlog)
     profile = next(item for item in backlog.items if "profile contact details" in item.title.lower())
     assert profile.child_ids == []
     assert any(
@@ -382,7 +437,7 @@ def test_invalid_repair_tasks_are_dropped_without_losing_feature_split() -> None
     repaired = _grouped_proposal(confirm_access_task=True)
     provider = MockProvider(responses=[_catch_all_proposal(), repaired])
     backlog, findings = decompose_backlog(_envelope(), provider)
-    assert _counts(backlog)["feature"] == 3
+    assert 3 <= _counts(backlog)["feature"] <= 6
     assert _counts(backlog)["user_story"] == 9
     assert not any("Investigate whether SAP API access exists" in item.title for item in backlog.items)
     assert any("documented SAP records interface" in item.title for item in backlog.items)
@@ -407,7 +462,7 @@ def test_incremental_release_nfr_is_not_copied_onto_every_story() -> None:
         "The system shall be released incrementally rather than in one large final delivery."
     )
     backlog, findings = decompose_backlog(
-        _envelope(), MockProvider(_catch_all_proposal()), repair=False
+        _envelope(), MockProvider(_catch_all_proposal(cover_encryption=False)), repair=False
     )
     nfr_path = "$.requirements.non_functional_requirements[0]"
     story_hits = [

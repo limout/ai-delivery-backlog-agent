@@ -463,7 +463,8 @@ def test_contradictory_access_statements_stay_unresolved() -> None:
     )
     unresolved = [item for item in findings.items if item.code is FindingCode.UNRESOLVED_PREREQUISITE]
     assert unresolved
-    assert "not yet granted" in unresolved[0].message.lower()
+    # The conflicting prerequisite is still reported (other unresolved findings may precede it).
+    assert any("not yet granted" in item.message.lower() for item in unresolved)
 
 
 def test_repair_may_drop_established_existence_check_without_omission_warning() -> None:

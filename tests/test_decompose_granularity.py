@@ -61,9 +61,13 @@ def _base_items(*, split_intake: bool, atomic_calendar: bool = True) -> list[dic
             provenance=[_src("$.requirements.functional_requirements[2]", "functional_requirements", fr[2])],
             description=(
                 "A clerk attaches a decision letter, the file is stored, and the upload retries "
-                "on timeout so the resident can download the outcome without visiting the counter."
+                "on timeout so the resident can download the outcome without visiting the counter. "
+                "Uploaded evidence is encrypted at rest."
             ),
-            tests=["Upload a PDF and assert it is stored and listed on the application."],
+            tests=[
+                "Upload a PDF and assert it is stored and listed on the application.",
+                "Assert uploaded evidence is encrypted at rest.",
+            ],
         ),
         _item(
             "task-letter-store",
@@ -172,7 +176,15 @@ def test_split_intake_keeps_calendar_atomic_and_traces_nfr() -> None:
     calendar = next(item for item in backlog.items if "holiday calendar" in item.title.lower())
     letter = next(item for item in backlog.items if "decision letter" in item.title.lower())
     assert calendar.child_ids == []
-    assert len(letter.child_ids) == 3
+    children = [item for item in backlog.items if item.canonical_id in letter.child_ids]
+    clarifications = [
+        item
+        for item in children
+        if any(ref.json_path.startswith("$.requirements.open_questions") for ref in item.provenance)
+    ]
+    # Three implementation tasks, plus one clarification task for the unresolved source question.
+    assert len(children) - len(clarifications) == 3
+    assert len(clarifications) == 1
     codes = {item.code for item in findings.items if calendar.canonical_id in item.canonical_ids}
     assert FindingCode.ATOMIC_STORY in codes
     assert FindingCode.OVERSIZED_STORY not in {
@@ -235,7 +247,9 @@ def test_missing_source_detail_is_a_finding_not_invented_work() -> None:
         )
     )
     # The task is concrete enough to pass title checks; uncertainty must still be visible.
-    _backlog, findings = decompose_backlog(_envelope(), MockProvider(_proposal(items)))
+    _backlog, findings = decompose_backlog(
+        _envelope(), MockProvider(_proposal(items)), repair=False
+    )
     assert any(item.code is FindingCode.AMBIGUOUS_DECOMPOSITION for item in findings.items)
     assert not any("story points" in item.title.lower() for item in _backlog.items)
 
@@ -243,7 +257,15 @@ def test_missing_source_detail_is_a_finding_not_invented_work() -> None:
 def test_story_without_needed_tasks_reports_missing_implementation() -> None:
     items = _base_items(split_intake=True)
     items = [item for item in items if not str(item["local_id"]).startswith("task-letter")]
-    _backlog, findings = decompose_backlog(_envelope(), MockProvider(_proposal(items)), repair=False)
+    # The unresolved source question would otherwise be attached to the letter story and
+    # hide the missing implementation work, so keep this fixture focused on that story.
+    payload = municipal_permits_envelope()
+    payload["requirements"]["open_questions"] = []
+    _backlog, findings = decompose_backlog(
+        CopilotWorkflowResponseV1.model_validate(payload),
+        MockProvider(_proposal(items)),
+        repair=False,
+    )
     missing = [item for item in findings.items if item.code is FindingCode.MISSING_IMPLEMENTATION_DETAIL]
     assert missing
 

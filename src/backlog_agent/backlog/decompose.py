@@ -28,10 +28,18 @@ from backlog_agent.backlog.models import (
     WorkItemType,
 )
 from backlog_agent.backlog.granularity import (
+    _QUESTION_FRAME_WORDS,
+    is_investigation_task,
     functional_requirement_paths,
+    item_represents_requirement,
     looks_like_implementation_work,
     record_granularity_findings,
     task_restates_parent,
+)
+from backlog_agent.backlog.quality_gate import (
+    blocking_quality_findings,
+    describe_blocking_findings,
+    is_material_hierarchy_finding,
 )
 from backlog_agent.backlog.proposal import (
     BacklogProposal,
@@ -63,6 +71,7 @@ from backlog_agent.source.model import (
     statement_polarity,
 )
 from backlog_agent.source.request_headings import (
+    distinctive_tokens,
     heading_appears_represented,
     parse_labeled_request_outcomes,
 )
@@ -137,6 +146,13 @@ def decompose_backlog(
     if it succeeds with actionable quality findings. Never both. The model
     cannot mark the result valid; ``CanonicalBacklogV1`` and coverage checks
     remain deterministic.
+
+    Acceptance contract (see ``quality_gate``): ``validation_passed`` is the hard
+    structural gate. ``accepted`` additionally requires that the candidate has no
+    blocking quality defect, and this applies equally to the initial tree and to
+    hard- and quality-repaired trees. A structurally valid tree may be returned
+    with ``accepted=false`` when no better candidate exists. The unresolved
+    defects stay in the findings. Advisory findings never decide acceptance.
     """
 
     source = load_project_source(envelope)
@@ -160,18 +176,14 @@ def decompose_backlog(
                 provider, quality_prompt, schema, source, calls, "quality_repair"
             )
             if second.ok:
-                _mark_accepted(calls, "quality_repair")
-                return _accepted(second, calls)
+                return _settle_quality_repair(result, second, calls)
             recovered = _recover_quality_repair(source, second)
             if recovered is not None:
-                _mark_accepted(calls, "quality_repair")
-                return _accepted(recovered, calls)
+                return _settle_quality_repair(result, recovered, calls)
             _record_lost_fr_paths(calls, result.proposal, second.proposal)
             _record_quality_repair_rejected(result, second)
-            _mark_accepted(calls, "initial")
-            return _accepted(result, calls)
-        _mark_accepted(calls, "initial")
-        return _accepted(result, calls)
+            return _settle_initial(result, calls)
+        return _settle_initial(result, calls)
 
     if repair:
         repair_prompt = _build_repair_prompt(prompt, raw, result.errors)
@@ -180,8 +192,7 @@ def decompose_backlog(
         )
         if second.ok:
             _note_dropped_grounded_tasks(source, raw, second)
-            _mark_accepted(calls, "hard_repair")
-            return _accepted(second, calls)
+            return _settle_hard_repair(second, calls)
         _record_lost_fr_paths(calls, result.proposal, second.proposal)
         result = second
 
@@ -242,7 +253,9 @@ def _try_materialize(source: NormalizedProjectSource, raw: Mapping[str, Any]) ->
     errors.extend(_execution_quality_errors(source, proposal))
     if not errors:
         _relocate_cross_cutting_constraints(source, proposal)
-        if not any(item.type is WorkItemType.TASK for item in proposal.items):
+        had_tasks = any(item.type is WorkItemType.TASK for item in proposal.items)
+        _restore_unresolved_question_tasks(source, proposal, findings)
+        if not had_tasks:
             injected = _attach_grounded_implementation_tasks(source, proposal)
             if injected:
                 extra = _execution_quality_errors(source, proposal)
@@ -1071,6 +1084,218 @@ def _attach_grounded_implementation_tasks(
     return injected
 
 
+_QUESTION_SOURCE_MARKERS = ("unknown", "open_question")
+
+
+def _same_unresolved_question(left: Any, right: Any) -> bool:
+    """True when two source facts ask the same thing in different words or sections."""
+
+    left_tokens = _distinctive_tokens(left.text) - _QUESTION_FRAME_WORDS
+    right_tokens = _distinctive_tokens(right.text) - _QUESTION_FRAME_WORDS
+    if not left_tokens or not right_tokens:
+        return False
+    return _covers_same_subject(left_tokens, right_tokens)
+
+
+def _question_matches(left: set[str], right: set[str]) -> set[str]:
+    """Shared words, also counting a word that extends another by a stem of 5+ letters."""
+
+    matched = set(_matched_tokens(left, right))
+    for token in left:
+        for other in right:
+            short, long = sorted((token, other), key=len)
+            if len(short) >= 5 and long.startswith(short) and len(long) - len(short) <= 6:
+                matched.add(token)
+    return matched
+
+
+def _covers_same_subject(left: set[str], right: set[str]) -> bool:
+    """Sharing a frame phrase ("the first release") must not equate different questions.
+
+    The overlap has to cover at least half of the shorter statement, and at least two words
+    unless the shorter statement has fewer.
+    """
+
+    smaller = min(len(left), len(right))
+    if not smaller:
+        return False
+    matched = len(_question_matches(left, right))
+    return matched >= min(2, smaller) and matched * 2 >= smaller
+
+
+def _question_core_tokens(group: list[Any]) -> set[str]:
+    """Words every phrasing of one question shares: its subject, not incidental context."""
+
+    token_sets = [_distinctive_tokens(fact.text) - _QUESTION_FRAME_WORDS for fact in group]
+    core = set(min(token_sets, key=len)) if token_sets else set()
+    for tokens in token_sets:
+        core &= _question_matches(core, tokens) & core
+    return core or set(min(token_sets, key=len)) if token_sets else set()
+
+
+def _unresolved_question_groups(source: NormalizedProjectSource) -> list[list[Any]]:
+    """Group unresolved unknowns and open questions, folding in matching dependencies.
+
+    Dependencies never create a group on their own: only a question that someone asked
+    needs a clarification task. Facts the source already establishes are excluded.
+    """
+
+    questions = [
+        fact
+        for fact in source.unknowns
+        if any(marker in fact.json_path for marker in _QUESTION_SOURCE_MARKERS)
+        and classify_claim(fact.text, source, skip_path=fact.json_path) != "established"
+    ]
+    groups: list[list[Any]] = []
+    for fact in questions:
+        matching = [group for group in groups if any(_same_unresolved_question(fact, m) for m in group)]
+        if not matching:
+            groups.append([fact])
+            continue
+        head = matching[0]
+        head.append(fact)
+        for other in matching[1:]:
+            head.extend(other)
+            groups.remove(other)
+    for dependency in source.blocking_dependencies:
+        if classify_claim(dependency.text, source, skip_path=dependency.json_path) == "established":
+            continue
+        for group in groups:
+            if any(_same_unresolved_question(dependency, member) for member in group):
+                group.append(dependency)
+                break
+    return groups
+
+
+def _group_is_represented(group: list[Any], tasks: list[ProposedItem]) -> bool:
+    paths = {fact.json_path for fact in group}
+    for task in tasks:
+        if any(reference.json_path in paths for reference in task.provenance):
+            return True
+        task_tokens = _distinctive_tokens(f"{task.title} {task.description}")
+        for fact in group:
+            fact_tokens = _distinctive_tokens(fact.text) - _QUESTION_FRAME_WORDS
+            if _covers_same_subject(fact_tokens, task_tokens - _QUESTION_FRAME_WORDS):
+                return True
+    return False
+
+
+def _question_parent(group: list[Any], stories: list[ProposedItem], tasked: Counter) -> ProposedItem | None:
+    """Pick the story that owns the question's subject, or None when none clearly does."""
+
+    scored: list[tuple[int, int, ProposedItem]] = []
+    core = _question_core_tokens(group)
+    for index, story in enumerate(stories):
+        title_tokens = _distinctive_tokens(story.title)
+        body_tokens = _distinctive_tokens(
+            " ".join([story.description, *story.acceptance_criteria, *story.test_requirements])
+        )
+        in_title = _question_matches(core, title_tokens)
+        in_body = _question_matches(core, body_tokens)
+        # A word in the title, or two words in the story's own text, shows the story owns the
+        # subject. This is a token heuristic: a question with no such story is reported instead.
+        score = 2 * len(in_title) + len(in_body - in_title)
+        if score >= 2:
+            scored.append((score, index, story))
+    if not scored:
+        return None
+    top = max(score for score, _index, _story in scored)
+    contenders = [entry for entry in scored if entry[0] * 4 >= top * 3]
+    # Among comparably relevant stories, work that must be built owns an open question before
+    # a story that merely mentions the subject; then prefer a story without tasks yet.
+    return max(
+        contenders,
+        key=lambda entry: (
+            looks_like_implementation_work(entry[2]),
+            -tasked[entry[2].local_id],
+            entry[0],
+            -entry[1],
+        ),
+    )[2]
+
+
+def _restore_unresolved_question_tasks(
+    source: NormalizedProjectSource,
+    proposal: BacklogProposal,
+    findings: _FindingSink,
+) -> list[ProposedItem]:
+    """Ensure each unresolved source question has exactly one clarification task.
+
+    The model's draft or repair may drop questions that the source still leaves open. Each
+    unresolved question (deduplicated across unknowns, open questions and dependencies) that no
+    existing task already represents gets one task under the story that owns its subject. No
+    answer is invented, established facts are never re-opened, and a question with no
+    plausible parent is reported instead of being attached to an unrelated story.
+    """
+
+    stories = [item for item in proposal.items if item.type is WorkItemType.USER_STORY]
+    if not stories:
+        return []
+    tasks = [item for item in proposal.items if item.type is WorkItemType.TASK]
+    tasked: Counter = Counter(item.parent_local_id for item in tasks if item.parent_local_id)
+    used_ids = {item.local_id for item in proposal.items}
+    injected: list[ProposedItem] = []
+    for index, group in enumerate(_unresolved_question_groups(source)):
+        if _group_is_represented(group, [*tasks, *injected]):
+            continue
+        parent = _question_parent(group, stories, tasked)
+        lead = max(group, key=lambda fact: len(str(fact.text)))
+        detail = " ".join(str(lead.text).split())
+        if parent is None:
+            findings.add(
+                Finding(
+                    severity=FindingSeverity.WARNING,
+                    code=FindingCode.UNRESOLVED_PREREQUISITE,
+                    message=(
+                        f"Unresolved source question has no clearly owning story, so no "
+                        f"clarification task was attached: {detail}"
+                    ),
+                    source_references=[
+                        _source_ref(fact.json_path, fact.field_name, excerpt=fact.text)
+                        for fact in group
+                    ],
+                )
+            )
+            continue
+        title = f"Clarify unresolved question: {detail}"
+        if len(title) > 180:
+            title = title[:177].rstrip() + "..."
+        local_id = f"task-question-{index + 1}"
+        suffix = 2
+        while local_id in used_ids:
+            local_id = f"task-question-{index + 1}-{suffix}"
+            suffix += 1
+        item = ProposedItem(
+            local_id=local_id,
+            type=WorkItemType.TASK,
+            title=title,
+            description=(
+                "Obtain the answer to this open source question for the parent story. "
+                "The answer is not yet known; do not assume one."
+            ),
+            parent_local_id=parent.local_id,
+            provenance=[
+                ProposedProvenance(
+                    json_path=fact.json_path, field_name=fact.field_name, excerpt=fact.text
+                )
+                for fact in group
+            ],
+            title_origin=ContentOrigin.GENERATED,
+            description_origin=ContentOrigin.GENERATED,
+        )
+        baseline = set(_execution_quality_errors(source, proposal))
+        proposal.items.append(item)
+        if set(_execution_quality_errors(source, proposal)) - baseline or _task_confirms_established_fact(
+            source, item
+        ):
+            proposal.items.remove(item)
+            continue
+        injected.append(item)
+        used_ids.add(local_id)
+        tasked[parent.local_id] += 1
+    return injected
+
+
 def _task_is_existence_or_availability_check(text: str) -> bool:
     if _EXISTENCE_CHECK.search(text):
         return True
@@ -1240,6 +1465,21 @@ def _record_uncovered_request_outcomes(
         for item in backlog.items
         if item.type in {WorkItemType.FEATURE, WorkItemType.USER_STORY, WorkItemType.TASK}
     )
+    # A task that only asks a question records an uncertainty; it does not implement or verify
+    # a stated outcome, so it cannot be the only evidence that an outcome is represented.
+    outcome_blob = " ".join(
+        " ".join(
+            [
+                item.title,
+                item.description,
+                *list(item.acceptance_criteria or ()),
+                *list(item.test_requirements or ()),
+            ]
+        )
+        for item in backlog.items
+        if item.type in {WorkItemType.FEATURE, WorkItemType.USER_STORY}
+        or (item.type is WorkItemType.TASK and not is_investigation_task(item))
+    )
     uncertainty_blob = ""
     if proposal is not None:
         notes = list(proposal.uncertainties)
@@ -1268,7 +1508,7 @@ def _record_uncovered_request_outcomes(
                 "source unknown supports a check, and cite this exact $.user_request excerpt."
             )
         else:
-            represented = represented or heading_appears_represented(section.title, story_blob)
+            represented = represented or heading_appears_represented(section.title, outcome_blob)
             if represented:
                 continue
             kind_word = "constraint" if section.evidence_kind == "constraint" else "outcome"
@@ -1336,15 +1576,39 @@ def _record_requirement_coverage_findings(
             continue
         if classify_scope(source, fact.text) in {"out", "conflict"}:
             continue
-        if _provenance_covers_fact(items, fact):
+        background: set[str] = set()
+        for other in source.functional_requirements:
+            background |= distinctive_tokens(other.text)
+        for other in source.acceptance_criteria:
+            background |= distinctive_tokens(other.text)
+        covering = [
+            item
+            for item in items
+            if getattr(item, "type", None) is WorkItemType.USER_STORY
+            or (
+                getattr(item, "type", None) is WorkItemType.TASK
+                and not is_investigation_task(item)
+            )
+        ]
+        if any(
+            item_represents_requirement(
+                item,
+                fact.text,
+                background=background,
+                # A Story covers a constraint only by verifying it. A Task is the work itself.
+                verification_only=getattr(item, "type", None) is WorkItemType.USER_STORY,
+            )
+            for item in covering
+        ):
             continue
         findings.add(
             Finding(
                 severity=FindingSeverity.WARNING,
                 code=FindingCode.UNCOVERED_NON_FUNCTIONAL_REQUIREMENT,
                 message=(
-                    "Non-functional requirement is not traced on any backlog item. "
-                    "A related Feature or Story without this source path does not count as coverage."
+                    "Non-functional requirement is not represented by backlog wording that "
+                    "implements or verifies the constraint. Provenance alone is not coverage. "
+                    "An ambiguity note is not a substitute for a Story or Task."
                 ),
                 source_references=[
                     _source_ref(fact.json_path, fact.field_name, excerpt=fact.text)
@@ -1433,7 +1697,8 @@ def _build_prompt(source: NormalizedProjectSource) -> str:
         "the feature's wording. Do not create extra features to reach a count. When several "
         "functional requirements describe distinct capability areas, keep those areas as separate "
         "features. Do not collapse them into one catch-all feature whose title is only an actor, "
-        "management, core, platform, or capabilities label. Integration stories belong with the "
+        "management, core, platform, or capabilities label. Do not join independently deliverable "
+        "outcomes with 'and' merely because they share a workflow. Integration stories belong with the "
         "capability they serve, or in their own feature when the source treats that integration as "
         "a separate capability.\n"
         "- Every item in required_functional_coverage needs its own user_story whose provenance "
@@ -1467,6 +1732,16 @@ def _build_prompt(source: NormalizedProjectSource) -> str:
         "covered on its own story. Do not invent additional systems, endpoints, databases, "
         "workflows, authentication protocols, or acceptance criteria the source does not state. "
         "If binding is uncertain, say so in uncertainties.\n"
+        "- If a functional requirement names more than one observable outcome, the story's "
+        "acceptance criteria must verify each outcome the story owns, or the requirement must be "
+        "split. Citing the requirement path is not evidence that every outcome is covered.\n"
+        "- Material system behaviors in non-functional requirements need a Story whose acceptance "
+        "criteria or test requirements verify them, or a Task whose wording implements them. A "
+        "description sentence, provenance, or an uncertainty note is not coverage. Distinguish "
+        "the required capability from unresolved mechanism details; plan discovery for those "
+        "details and do not invent unconfirmed behavior.\n"
+        "- Attach investigation tasks to the story whose outcome the unknown actually constrains. "
+        "Do not duplicate the same source unknown as overlapping clarification tasks.\n"
         "- Acceptance criteria are observable outcomes. test_requirements are verification activities "
         "(tests to run, data to assert, integrations to stub). They must not copy acceptance criteria. "
         "Mark test_requirements generated.\n"
@@ -1551,7 +1826,31 @@ def _build_prompt(source: NormalizedProjectSource) -> str:
 
 
 def _actionable_quality_findings(findings: _FindingSink) -> list[Finding]:
-    return [item for item in findings.items if item.code in _QUALITY_REPAIR_CODES]
+    actionable: list[Finding] = []
+    for item in findings.items:
+        if is_material_hierarchy_finding(item):
+            # A material defect decides acceptance, so it always earns the single repair.
+            actionable.append(item)
+            continue
+        if item.code in _QUALITY_REPAIR_CODES:
+            actionable.append(item)
+            continue
+        if item.code is FindingCode.MISSING_VERIFICATION_COVERAGE and (
+            "does not verify every outcome" in item.message
+        ):
+            actionable.append(item)
+            continue
+        if (
+            item.code is FindingCode.AMBIGUOUS_DECOMPOSITION
+            and item.message.startswith("Investigation task ")
+        ):
+            actionable.append(item)
+            continue
+        if item.code is FindingCode.OVER_DECOMPOSITION and item.message.startswith(
+            "Overlapping investigation tasks "
+        ):
+            actionable.append(item)
+    return actionable
 
 
 def _proposal_item_counts(proposal: BacklogProposal | None) -> dict[str, int]:
@@ -1629,6 +1928,11 @@ def _diagnostic(
         usable_proposal=parsed if usable_proposal is None else usable_proposal,
         validation_passed=ok,
         accepted=False,
+        blocking_quality_findings=(
+            len(blocking_quality_findings(result.findings.items))
+            if result is not None and ok
+            else 0
+        ),
         validation_errors=_public_validation_errors(errors),
         item_counts=_proposal_item_counts(proposal),
         covered_fr_paths=_covered_fr_paths(proposal),
@@ -1805,6 +2109,117 @@ def _accepted(result: _MaterializeResult, calls: list[LlmCallDiagnostic]) -> tup
     return result.backlog, GenerationFindings(items=result.findings.items, llm_calls=calls)
 
 
+# Acceptance contract (see ``quality_gate``): a candidate is marked accepted only when it
+# passed hard validation and carries no blocking quality defect. The helpers below are the
+# only places that call ``_mark_accepted``. A tree may still be *returned* with
+# ``accepted=false`` when it is the best structurally valid tree available.
+
+
+def _blocking_count(result: _MaterializeResult) -> int:
+    return len(blocking_quality_findings(result.findings.items))
+
+
+def _record_unresolved_blocking(
+    result: _MaterializeResult, *, subject: str, outcome: str
+) -> None:
+    result.findings.add(
+        Finding(
+            severity=FindingSeverity.WARNING,
+            code=FindingCode.QUALITY_REPAIR_REJECTED,
+            message=(
+                f"{subject} still has blocking quality defects, so it is not accepted: "
+                f"{describe_blocking_findings(result.findings.items)}. {outcome} Advisory "
+                "findings do not affect acceptance."
+            ),
+        )
+    )
+
+
+def _settle_initial(
+    result: _MaterializeResult, calls: list[LlmCallDiagnostic]
+) -> tuple[CanonicalBacklogV1, GenerationFindings]:
+    """Return the initial tree. Accepted only when no blocking quality defect remains."""
+
+    if _blocking_count(result) == 0:
+        _mark_accepted(calls, "initial")
+    return _accepted(result, calls)
+
+
+def _settle_hard_repair(
+    second: _MaterializeResult, calls: list[LlmCallDiagnostic]
+) -> tuple[CanonicalBacklogV1, GenerationFindings]:
+    """The initial tree was invalid, so the repaired tree is the only candidate.
+
+    It is returned either way. It is accepted only when it has no blocking quality defect.
+    The single repair is spent, so an unresolved defect is reported rather than hidden.
+    """
+
+    if _blocking_count(second) == 0:
+        _mark_accepted(calls, "hard_repair")
+        return _accepted(second, calls)
+    _record_unresolved_blocking(
+        second,
+        subject="The hard-repaired backlog",
+        outcome=(
+            "No further repair is allowed, so the structurally valid tree is returned for "
+            "review without being accepted."
+        ),
+    )
+    return _accepted(second, calls)
+
+
+def _settle_quality_repair(
+    initial: _MaterializeResult,
+    repaired: _MaterializeResult,
+    calls: list[LlmCallDiagnostic],
+) -> tuple[CanonicalBacklogV1, GenerationFindings]:
+    """Pick between two valid trees. A repair must not regress and is never trusted blindly.
+
+    * repaired has no blocking defect: accepted.
+    * repaired introduced blocking defects the initial tree did not have: keep the initial tree.
+    * both have blocking defects: return whichever has strictly fewer (ties keep the initial
+      tree), without accepting it.
+    """
+
+    before = _blocking_count(initial)
+    after = _blocking_count(repaired)
+    if after == 0:
+        _mark_accepted(calls, "quality_repair")
+        return _accepted(repaired, calls)
+    if before == 0:
+        initial.findings.add(
+            Finding(
+                severity=FindingSeverity.WARNING,
+                code=FindingCode.QUALITY_REPAIR_REJECTED,
+                message=(
+                    "Quality repair was rejected because it introduced blocking quality defects "
+                    f"({describe_blocking_findings(repaired.findings.items)}); the initial valid "
+                    "proposal was kept. Advisory findings do not affect acceptance."
+                ),
+            )
+        )
+        return _settle_initial(initial, calls)
+    if after < before:
+        _record_unresolved_blocking(
+            repaired,
+            subject="The quality-repaired backlog",
+            outcome=(
+                f"It resolved some defects ({before} before, {after} after) but no further "
+                "repair is allowed, so it is returned for review without being accepted."
+            ),
+        )
+        return _accepted(repaired, calls)
+    _record_unresolved_blocking(
+        initial,
+        subject="The initial backlog",
+        outcome=(
+            "The quality repair did not reduce the blocking defects, so the initial tree was "
+            "kept without being accepted."
+        ),
+    )
+    return _accepted(initial, calls)
+
+
 def _invoke_provider(
     provider: AIProvider,
     prompt: str,
@@ -1945,7 +2360,28 @@ def _build_quality_repair_prompt(
         "automatically as separate technical stories. Never add a user_story whose only "
         "requirement provenance is a non-functional requirement; attach that exact path and "
         "excerpt to related functional work instead. Never merge distinct functional "
-        "requirements onto one user_story.\n"
+        "requirements onto one user_story. A material behavior in an NFR or FR needs a Story "
+        "or Task whose wording implements or verifies it; for a Story that means acceptance "
+        "criteria or test requirements, not a description sentence. An ambiguity note is not "
+        "coverage. When mechanism details are unknown, keep the required capability on backlog work and "
+        "attach a relevant discovery task; do not invent unconfirmed behavior.\n"
+        "- If a finding says a story does not verify every owned outcome, add acceptance "
+        "criteria or tests for the missing outcomes, or split into coherent stories. Provenance "
+        "and the story title are not verification. Each distinct outcome named by the source "
+        "requirement needs its own criterion or test in the source's wording; verifying a "
+        "related outcome (for example, historical data in the same system) does not verify "
+        "access to a different thing the requirement names.\n"
+        "- Never delete a clarification task for a question the source still leaves open: "
+        "keep it, under the story whose outcome the answer constrains.\n"
+        "- If an investigation task is attached to the wrong parent, move it under the story "
+        "whose outcome the unknown constrains. Do not duplicate the same unknown.\n"
+        "- A finding that begins 'Material hierarchy defect' leaves the repaired backlog "
+        "unaccepted if it remains. Fix it by moving stories to features that describe their "
+        "capability, moving a clarification task to the story it constrains, or merging "
+        "clarification tasks that ask the same question into one task that cites every source "
+        "entry. Do not add items to reach a count, and do not delete a legitimately unresolved "
+        "question: exactly one relevant clarification task represents it. Findings without that "
+        "marker are advisory.\n"
         "- Preserve previously covered functional requirements. The coverage snapshot lists "
         "local_id, json_path, and excerpt pairs that must remain covered by some user_story "
         "after repair. You may move a path to a different story when splitting overlap, but "
@@ -2083,7 +2519,11 @@ def _build_repair_prompt(
         "List visibility and renewal-term review are separate outcomes. Keep any cited provenance "
         "excerpt equal to the full source field, and never mark the scoped sentence as source.\n"
         "- Attach each in-scope non-functional requirement's exact path and excerpt to an existing "
-        "FR-backed item it constrains. Do not add a story that has only an NFR path.\n"
+        "FR-backed item it constrains. Do not add a story that has only an NFR path. Do not "
+        "fix that error by deleting the behavior: the FR-backed story that receives the path "
+        "must also gain an acceptance criterion or test requirement that verifies the "
+        "constraint's behavior. Provenance or a description sentence alone is not coverage, and "
+        "an uncovered constraint leaves the repaired backlog unaccepted.\n"
         "- Previous tasks are listed below. Preserve each task whose provenance cites an unknown, "
         "open question, unresolved or conflicting dependency, or discovery fact, or replace it "
         "with an equivalent task that uses the same json_path and excerpt, a bounded objective, "
@@ -2107,6 +2547,9 @@ def _build_repair_prompt(
         "source does not support, do not confirm established facts, and do not require a task "
         "under every story.\n"
         "- Feature provenance should describe the capability its child stories implement.\n"
+        "- Keep exactly one clarification task per unresolved question, under the story whose "
+        "outcome it constrains, citing every source entry that raises it. Do not leave a feature "
+        "that collects unrelated story outcomes.\n"
         f"Validation errors:\n{listed}\n\n"
         f"Previous tasks to preserve or replace when they are evidence-supported:\n{tasks}\n\n"
         "Previous JSON:\n"

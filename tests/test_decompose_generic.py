@@ -109,8 +109,20 @@ def _library_proposal(*, cover_notify: bool = True, trace_nfr: bool = True) -> d
             description=(
                 "A member selects an available copy and places a hold so the copy is reserved "
                 "until pickup rather than remaining on the open shelf."
+                + (
+                    " Catalog search p95 latency must stay under 400 milliseconds."
+                    if trace_nfr
+                    else ""
+                )
             ),
-            tests=["Contract test: hold request against an available copy returns reserved status."],
+            tests=[
+                "Contract test: hold request against an available copy returns reserved status.",
+                *(
+                    ["Assert catalog search p95 latency stays under 400 milliseconds."]
+                    if trace_nfr
+                    else []
+                ),
+            ],
         ),
     ]
     if cover_notify:
@@ -788,6 +800,15 @@ def test_nfr_counts_only_when_its_path_is_on_an_item() -> None:
             constraint,
         )
     )
+    search["description"] = (
+        search["description"]
+        + " The catalog service remains the authoritative source of truth for holdings."
+    )
+    search["test_requirements"] = [
+        *search["test_requirements"],
+        "Assert the catalog service remains the authoritative source of truth for holdings.",
+    ]
+    search["test_requirements_origins"] = ["generated"] * len(search["test_requirements"])
     _covered, covered_findings = decompose_backlog(envelope, MockProvider(attached), repair=False)
     assert not any(
         item.code is FindingCode.UNCOVERED_NON_FUNCTIONAL_REQUIREMENT

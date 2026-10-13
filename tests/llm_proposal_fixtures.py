@@ -115,8 +115,14 @@ def representative_complete_proposal() -> dict[str, Any]:
                 ),
                 "parent_local_id": "feat-renewal",
                 "depends_on_local_ids": [],
-                "acceptance_criteria": [],
-                "test_requirements": [],
+                "acceptance_criteria": [
+                    "The proposed premium and coverage are shown before confirmation."
+                ],
+                "acceptance_criteria_origins": ["generated"],
+                "test_requirements": [
+                    "Assert the review screen shows premium and coverage before confirm is enabled."
+                ],
+                "test_requirements_origins": ["generated"],
                 "provenance": [
                     _src("$.requirements.functional_requirements[2]", "functional_requirements", fr[2])
                 ],

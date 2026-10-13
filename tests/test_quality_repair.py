@@ -175,11 +175,13 @@ def _pickup_proposal(*, overlapping: bool) -> dict:
     caps = payload["solution"]["key_capabilities"]
     nfr = payload["requirements"]["non_functional_requirements"][0]
     hold_description = (
-        "A member places a hold on an available copy so the copy is reserved."
+        "A member places a hold on an available copy so the copy is reserved. "
+        "Catalog search p95 latency must stay under 400 milliseconds."
         if not overlapping
         else (
             "A member places a hold on an available copy and trigger a pickup notice "
-            "via the notice service so the copy is reserved."
+            "via the notice service so the copy is reserved. "
+            "Catalog search p95 latency must stay under 400 milliseconds."
         )
     )
     hold_ac = [ac] if overlapping else ["A member can place a hold on an available copy."]
@@ -221,7 +223,10 @@ def _pickup_proposal(*, overlapping: bool) -> dict:
             description=hold_description,
             ac=hold_ac,
             ac_origins=hold_ac_origins,
-            tests=["Place a hold on an available copy and assert it is reserved."],
+            tests=[
+                "Place a hold on an available copy and assert it is reserved.",
+                "Assert catalog search p95 latency stays under 400 milliseconds.",
+            ],
         ),
         _item(
             "story-notice",
@@ -279,11 +284,15 @@ def _merged_pickup_proposal() -> dict:
             title_origin="generated",
             description=(
                 "A member places a hold on an available copy and trigger a pickup notice "
-                "via the notice service so the copy is reserved."
+                "via the notice service so the copy is reserved. "
+                "Catalog search p95 latency must stay under 400 milliseconds."
             ),
             ac=[ac],
             ac_origins=["source"],
-            tests=["Walk hold placement and pickup notice in one scenario."],
+            tests=[
+                "Walk hold placement and pickup notice in one scenario.",
+                "Assert catalog search p95 latency stays under 400 milliseconds.",
+            ],
         ),
     ]
     return {"items": items, "prerequisites": []}
@@ -488,6 +497,14 @@ def test_uncovered_nfr_remains_visible_and_can_trigger_quality_repair() -> None:
         for reference in hold["provenance"]
         if not reference["json_path"].startswith("$.requirements.non_functional_requirements")
     ]
+    hold["description"] = hold["description"].replace(
+        " Catalog search p95 latency must stay under 400 milliseconds.",
+        "",
+    )
+    hold["test_requirements"] = [
+        text for text in hold["test_requirements"] if "latency" not in text
+    ]
+    hold["test_requirements_origins"] = ["generated"] * len(hold["test_requirements"])
     repaired = _pickup_proposal(overlapping=False)
     provider = MockProvider(responses=[copy.deepcopy(overlapping), repaired])
     _backlog, findings = decompose_backlog(_pickup_envelope(), provider)

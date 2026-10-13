@@ -240,6 +240,14 @@ def _fixture_proposal(payload: dict, source) -> dict:
                 ),
             )
         )
+    for index, fact in enumerate(source.functional_requirements):
+        story = next(item for item in items if item["local_id"] == f"story-fr-{index}")
+        story["test_requirements"] = [f"Verify: {fact.text}"]
+        if index == 3:
+            story["test_requirements"] += [
+                f"Verify: {nfr.text}" for nfr in source.non_functional_requirements
+            ]
+        story["test_requirements_origins"] = ["generated"] * len(story["test_requirements"])
     for section in source.narrative_sections:
         if section.evidence_kind != "outcome":
             continue
@@ -444,7 +452,12 @@ def test_customer_service_visibility_repair_keeps_or_reports_exact_narrative_evi
     assert [reference.json_path for reference in stored.provenance] == ["$.user_request"]
     assert stored.provenance[0].excerpt == section.excerpt
     assert initial_titles <= {item.title for item in backlog.items}
-    assert len(backlog.items) == len(initial["items"]) + 1
+    restored = [
+        item for item in backlog.items if item.title.startswith("Clarify unresolved question:")
+    ]
+    # Exactly one new story, plus one clarification task per unresolved source question.
+    assert len(backlog.items) == len(initial["items"]) + 1 + len(restored)
+    assert restored and all(item.type is WorkItemType.TASK for item in restored)
     assert not any(
         item.code is FindingCode.UNCOVERED_REQUEST_OUTCOME and " FR-09:" in item.message
         for item in findings.items
@@ -457,7 +470,11 @@ def test_customer_service_visibility_repair_keeps_or_reports_exact_narrative_evi
     assert ignored_findings.llm_calls[1].accepted is True
     assert _fr_paths(ignored_backlog) == {fact.json_path for fact in source.functional_requirements}
     assert all(reference.excerpt != section.excerpt for item in ignored_backlog.items for reference in item.provenance)
-    assert {item.title for item in ignored_backlog.items} == initial_titles
+    assert {
+        item.title
+        for item in ignored_backlog.items
+        if not item.title.startswith("Clarify unresolved question:")
+    } == initial_titles
     assert any(
         item.code is FindingCode.UNCOVERED_REQUEST_OUTCOME and " FR-09:" in item.message
         for item in ignored_findings.items

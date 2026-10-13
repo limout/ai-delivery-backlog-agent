@@ -162,6 +162,113 @@ def warehouse_picking_envelope() -> dict[str, Any]:
     )
 
 
+def field_inspection_envelope() -> dict[str, Any]:
+    """Regression fixture: mobile field inspections with connectivity and dual-access FR.
+
+    Domain terms are test data only. Production code must not special-case them.
+    """
+
+    return _complete(
+        user_request=(
+            "Build a mobile application so field technicians can complete installation "
+            "inspections. Technicians must access installation details and previous "
+            "inspection reports, start and complete an inspection, record observed defects, "
+            "and submit an inspection report with follow-up actions. The app must remain "
+            "usable during unreliable connectivity and synchronize captured work when "
+            "connectivity is restored. The existing asset registry is the source of truth. "
+            "API access and technical documentation are available and verified."
+        ),
+        executive_summary="Field technicians complete installation inspections from a mobile app.",
+        requirements={
+            "functional_requirements": [
+                "The system shall let a technician access installation details and previous inspection reports.",
+                "The system shall let a technician start and complete a field inspection.",
+                "The system shall let a technician record observed defects against an installation.",
+                "The system shall let a technician submit an inspection report and follow-up actions.",
+            ],
+            "acceptance_criteria": [
+                "A technician can open an assigned installation and see its current details.",
+                "A technician can start and complete a field inspection.",
+                "A technician can record an observed defect against the installation.",
+                "A technician can submit the inspection report together with follow-up actions.",
+            ],
+            "non_functional_requirements": [
+                "The mobile app must remain usable during unreliable connectivity and synchronize captured work when connectivity is restored.",
+            ],
+            "open_questions": [
+                "Retry and conflict behavior when synchronizing captured work is unspecified.",
+            ],
+        },
+        solution={
+            "key_capabilities": [
+                "Field inspection completion",
+                "Defect recording",
+                "Inspection reporting",
+                "Deferred synchronization of captured work",
+            ]
+        },
+        delivery_plan={
+            "delivery_phases": ["Build"],
+            "workstreams": ["Field experience"],
+            "milestones": ["Inspection MVP"],
+            "dependencies": [
+                "Access to the asset registry API and technical documentation",
+            ],
+        },
+        sow={
+            "in_scope": ["Field inspections", "Defect recording", "Inspection reports"],
+            "out_of_scope": ["Crew scheduling"],
+            "deliverables": ["Mobile inspection workflow"],
+        },
+    )
+
+
+def clinic_rounds_envelope() -> dict[str, Any]:
+    """Unrelated-domain fixture for the same coverage and grouping rules."""
+
+    return _complete(
+        user_request=(
+            "Build a handheld board so ward nurses can complete bedside rounds. "
+            "Nurses must view the current care plan and previous shift notes, record "
+            "observations, and raise a follow-up for the next shift. The board must "
+            "remain usable during unreliable ward Wi-Fi and synchronize captured notes "
+            "when the connection returns."
+        ),
+        executive_summary="Ward nurses complete bedside rounds from a handheld board.",
+        requirements={
+            "functional_requirements": [
+                "The system shall let a nurse view the current care plan and previous shift notes.",
+                "The system shall let a nurse record a bedside observation.",
+                "The system shall let a nurse raise a follow-up for the next shift.",
+            ],
+            "acceptance_criteria": [
+                "A nurse can open the current care plan for the assigned patient.",
+                "A nurse can record a bedside observation.",
+                "A nurse can raise a follow-up for the next shift.",
+            ],
+            "non_functional_requirements": [
+                "The handheld board must remain usable during unreliable ward Wi-Fi and synchronize captured notes when the connection returns.",
+            ],
+            "open_questions": [
+                "Conflict handling when two nurses synchronize overlapping notes is unspecified.",
+            ],
+        },
+        solution={
+            "key_capabilities": [
+                "Care-plan visibility",
+                "Bedside observation capture",
+                "Shift follow-up",
+                "Deferred note synchronization",
+            ]
+        },
+        sow={
+            "in_scope": ["Bedside rounds"],
+            "out_of_scope": ["Pharmacy dispensing"],
+            "deliverables": ["Handheld rounds board"],
+        },
+    )
+
+
 def customer_portal_nine_outcomes_envelope() -> dict[str, Any]:
     """Nine independently testable outcomes spanning distinct capability areas."""
 

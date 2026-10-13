@@ -410,7 +410,7 @@ def test_downstream_system_mention_is_not_integration_ownership() -> None:
     assert FindingCode.OVERLAPPING_STORY_RESPONSIBILITY not in _codes(sink)
 
 
-def test_broad_feature_is_not_misaligned_when_most_children_match() -> None:
+def test_compound_feature_with_unrelated_notice_is_misaligned() -> None:
     search = _story(
         "cbl_search",
         "Search the Catalog",
@@ -449,7 +449,7 @@ def test_broad_feature_is_not_misaligned_when_most_children_match() -> None:
         SimpleNamespace(items=[feature, search, hold, notice]),
         sink,
     )
-    assert FindingCode.FEATURE_CHILD_MISALIGNMENT not in _codes(sink)
+    assert FindingCode.FEATURE_CHILD_MISALIGNMENT in _codes(sink)
 
 
 def test_feature_provenance_that_covers_only_a_minority_warns() -> None:
@@ -647,7 +647,7 @@ def test_coherent_feature_with_narrow_provenance_is_not_split() -> None:
         SimpleNamespace(items=[feature, review, submit, notice]),
         sink,
     )
-    assert FindingCode.FEATURE_CHILD_MISALIGNMENT not in _codes(sink)
+    assert FindingCode.FEATURE_CHILD_MISALIGNMENT in _codes(sink)
 
 
 def test_feature_description_covers_children_that_do_not_repeat_title_tokens() -> None:

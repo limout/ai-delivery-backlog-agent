@@ -135,7 +135,8 @@ def print_summary(
                 "  "
                 f"kind={call.kind} usable_proposal={str(call.usable_proposal).lower()} "
                 f"validation_passed={str(call.validation_passed).lower()} "
-                f"accepted={str(call.accepted).lower()}",
+                f"accepted={str(call.accepted).lower()} "
+                f"blocking_quality_findings={call.blocking_quality_findings}",
                 file=file,
             )
             if call.item_counts:

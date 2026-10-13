@@ -123,6 +123,15 @@ def test_nfr_traced_when_applicable() -> None:
             "excerpt": nfr,
         }
     )
+    story["description"] = (
+        story.get("description", "")
+        + " The existing policy administration system remains the source of truth."
+    )
+    story["test_requirements"] = [
+        *story.get("test_requirements", []),
+        "Assert the existing policy administration system remains the source of truth.",
+    ]
+    story["test_requirements_origins"] = ["generated"] * len(story["test_requirements"])
     provider = MockProvider(proposal)
     _backlog, findings = decompose_backlog(CopilotWorkflowResponseV1.model_validate(payload), provider)
 
@@ -185,6 +194,10 @@ def test_nfr_attached_to_fr_backed_story_covers_the_constraint() -> None:
             "excerpt": nfr,
         }
     )
+    story["description"] = story.get("description", "") + " Encrypt sensitive information in transit."
+    story["acceptance_criteria"] = list(story.get("acceptance_criteria") or []) + [
+        "Sensitive information is encrypted in transit."
+    ]
     backlog, findings = decompose_backlog(
         CopilotWorkflowResponseV1.model_validate(payload),
         MockProvider(proposal),
