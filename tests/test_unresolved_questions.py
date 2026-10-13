@@ -27,6 +27,7 @@ from tests.test_material_hierarchy import (
     _payload,
     _run,
 )
+from tests.test_decompose_generic import _src
 from tests.test_story_overlap import _ref, _Sink, _story
 
 _HARVEST_QUESTION = "Which harvest summary file format is required?"
@@ -184,12 +185,77 @@ def test_question_without_a_clearly_owning_story_is_reported_not_misparented() -
         repair=False,
     )
     assert len(_clarifications(backlog)) == 1
-    assert any(
-        item.code is FindingCode.UNRESOLVED_PREREQUISITE
-        and "no clearly owning story" in item.message
-        and "backup retention" in item.message
+    assert _project_level(findings, "backup retention")
+
+
+def _project_level(findings, phrase: str) -> list:
+    return [
+        item
         for item in findings.items
-    )
+        if item.code is FindingCode.UNRESOLVED_PREREQUISITE and phrase in item.message
+    ]
+
+
+def _epic(backlog):
+    return next(item for item in backlog.items if item.type is WorkItemType.EPIC)
+
+
+# -- project-level questions: kept without inventing or forcing a parent ----------------------
+
+
+def test_unowned_question_is_kept_at_project_level_with_every_source_path() -> None:
+    payload = _payload(questions=["Which backup retention window applies to archived invoice statements?"])
+    payload["discovery"] = {"unknowns": ["Backup retention window"]}
+    payload["delivery_plan"]["dependencies"] = ["Decision on the invoice statement backup retention window"]
+    backlog, findings, _provider = _run(payload, _grouped(payload, tasks=[]), repair=False)
+
+    # No unrelated story received a task, and no story was invented to hold one.
+    assert not [item for item in backlog.items if item.type is WorkItemType.TASK]
+    assert len([i for i in backlog.items if i.type is WorkItemType.USER_STORY]) == 4
+    kept = _project_level(findings, "backup retention")
+    assert len(kept) == 1  # one question, however many sections repeat it
+    expected = {
+        "$.requirements.open_questions[0]",
+        "$.discovery.unknowns[0]",
+        "$.delivery_plan.dependencies[0]",
+    }
+    assert {ref.json_path for ref in kept[0].source_references} == expected
+    # The returned backlog itself keeps the paths, on the epic that spans the whole project.
+    assert expected <= {ref.json_path for ref in _epic(backlog).provenance}
+    assert all(ref.excerpt for ref in _epic(backlog).provenance)
+
+
+def test_question_spanning_several_stories_is_not_forced_under_one_of_them() -> None:
+    shared = "Which harvest greenhouse policy applies?"
+    payload = _payload(questions=[shared])
+    backlog, findings, _provider = _run(payload, _grouped(payload, tasks=[]), repair=False)
+
+    assert _clarifications(backlog) == []  # the harvest and greenhouse stories match equally
+    assert len(_project_level(findings, "harvest greenhouse")) == 1
+    assert "$.requirements.open_questions[0]" in {ref.json_path for ref in _epic(backlog).provenance}
+
+
+def test_a_model_supplied_prerequisite_for_the_question_is_not_duplicated() -> None:
+    question = "Which backup retention window applies to archived invoice statements?"
+    payload = _payload(questions=[question])
+    proposal = _grouped(payload, tasks=[])
+    proposal["prerequisites"] = [
+        {
+            "text": question,
+            "status": "unresolved",
+            "provenance": [_src("$.requirements.open_questions[0]", "open_questions", question)],
+        }
+    ]
+    _backlog, findings, _provider = _run(payload, proposal, repair=False)
+    assert len(_project_level(findings, "backup retention")) == 1
+
+
+def test_a_question_with_a_single_clear_owner_still_gets_a_task_not_a_project_level_entry() -> None:
+    payload = _payload(questions=[_HARVEST_QUESTION])
+    backlog, findings, _provider = _run(payload, _grouped(payload, tasks=[]), repair=False)
+    assert len(_clarifications(backlog)) == 1
+    assert not _project_level(findings, "harvest summary file format")
+    assert "$.requirements.open_questions[0]" not in {ref.json_path for ref in _epic(backlog).provenance}
 
 
 # -- the same question from several sources gives one task ----------------------------------

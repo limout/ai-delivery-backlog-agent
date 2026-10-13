@@ -45,6 +45,7 @@ from backlog_agent.backlog.proposal import (
     BacklogProposal,
     ContentOrigin,
     ProposedItem,
+    ProposedPrerequisite,
     ProposedProvenance,
     proposal_json_schema,
 )
@@ -254,9 +255,14 @@ def _try_materialize(source: NormalizedProjectSource, raw: Mapping[str, Any]) ->
     if not errors:
         _relocate_cross_cutting_constraints(source, proposal)
         had_tasks = any(item.type is WorkItemType.TASK for item in proposal.items)
-        _restore_unresolved_question_tasks(source, proposal, findings)
+        _restore_unresolved_question_tasks(source, proposal)
         if not had_tasks:
-            injected = _attach_grounded_implementation_tasks(source, proposal)
+            # Questions were just placed (or kept at project level); never re-attach them to
+            # whichever story they loosely resemble.
+            handled = {
+                fact.json_path for group in _unresolved_question_groups(source) for fact in group
+            }
+            injected = _attach_grounded_implementation_tasks(source, proposal, skip_paths=handled)
             if injected:
                 extra = _execution_quality_errors(source, proposal)
                 if extra:
@@ -1006,7 +1012,9 @@ def _fact_targets_story(fact: Any, story: ProposedItem) -> bool:
 
 
 def _attach_grounded_implementation_tasks(
-    source: NormalizedProjectSource, proposal: BacklogProposal
+    source: NormalizedProjectSource,
+    proposal: BacklogProposal,
+    skip_paths: set[str] | frozenset[str] = frozenset(),
 ) -> list[ProposedItem]:
     """Add bounded tasks for unresolved source work. Never re-check established facts."""
 
@@ -1026,7 +1034,7 @@ def _attach_grounded_implementation_tasks(
     used_titles = {normalize_source_text(item.title) for item in proposal.items}
     injected: list[ProposedItem] = []
     for index, fact in enumerate(_remaining_implementation_facts(source)):
-        if fact.json_path in cited_paths:
+        if fact.json_path in cited_paths or fact.json_path in skip_paths:
             continue
         candidates = [story for story in stories if _fact_targets_story(fact, story)]
         if not candidates:
@@ -1202,35 +1210,71 @@ def _question_parent(group: list[Any], stories: list[ProposedItem], tasked: Coun
     top = max(score for score, _index, _story in scored)
     contenders = [entry for entry in scored if entry[0] * 4 >= top * 3]
     # Among comparably relevant stories, work that must be built owns an open question before
-    # a story that merely mentions the subject; then prefer a story without tasks yet.
-    return max(
-        contenders,
-        key=lambda entry: (
-            looks_like_implementation_work(entry[2]),
-            -tasked[entry[2].local_id],
-            entry[0],
-            -entry[1],
-        ),
-    )[2]
+    # a story that merely mentions the subject.
+    def standing(entry: tuple[int, int, ProposedItem]) -> tuple[bool, int]:
+        return (looks_like_implementation_work(entry[2]), entry[0])
+
+    best = max(standing(entry) for entry in contenders)
+    leaders = [entry for entry in contenders if standing(entry) == best]
+    if len(leaders) > 1:
+        # Several stories own the subject equally: it spans capabilities, and a task can only
+        # hang under one story. Picking one would be arbitrary, so none is chosen.
+        return None
+    return leaders[0][2]
+
+
+def _record_project_level_question(
+    proposal: BacklogProposal, group: list[Any], detail: str
+) -> None:
+    """Represent a question no single story owns, without inventing a parent.
+
+    The hierarchy only lets a task sit under one user story, so a question that spans
+    capabilities (or that no story owns) is recorded as an unresolved prerequisite, which is not
+    a work item, and its source paths are cited on the epic, as other project-level constraints
+    are. Every source path of the deduplicated question is kept.
+    """
+
+    paths = {fact.json_path for fact in group}
+    references = [
+        ProposedProvenance(json_path=fact.json_path, field_name=fact.field_name, excerpt=fact.text)
+        for fact in group
+    ]
+    fact_tokens = _distinctive_tokens(detail) - _QUESTION_FRAME_WORDS
+    represented = any(
+        any(reference.json_path in paths for reference in prerequisite.provenance)
+        or _covers_same_subject(
+            fact_tokens, _distinctive_tokens(prerequisite.text) - _QUESTION_FRAME_WORDS
+        )
+        for prerequisite in proposal.prerequisites
+    )
+    if not represented:
+        prerequisite = ProposedPrerequisite(text=detail, provenance=references)
+        prerequisite._added_by_validation = True
+        proposal.prerequisites.append(prerequisite)
+    epics = [item for item in proposal.items if item.type is WorkItemType.EPIC]
+    if len(epics) != 1:
+        return
+    cited = {reference.json_path for reference in epics[0].provenance}
+    for reference in references:
+        if reference.json_path not in cited:
+            epics[0].provenance.append(reference)
+            cited.add(reference.json_path)
 
 
 def _restore_unresolved_question_tasks(
     source: NormalizedProjectSource,
     proposal: BacklogProposal,
-    findings: _FindingSink,
 ) -> list[ProposedItem]:
     """Ensure each unresolved source question has exactly one clarification task.
 
     The model's draft or repair may drop questions that the source still leaves open. Each
     unresolved question (deduplicated across unknowns, open questions and dependencies) that no
     existing task already represents gets one task under the story that owns its subject. No
-    answer is invented, established facts are never re-opened, and a question with no
-    plausible parent is reported instead of being attached to an unrelated story.
+    answer is invented and established facts are never re-opened. A question that no single
+    story clearly owns is kept as a project-level unresolved prerequisite instead.
     """
 
     stories = [item for item in proposal.items if item.type is WorkItemType.USER_STORY]
-    if not stories:
-        return []
     tasks = [item for item in proposal.items if item.type is WorkItemType.TASK]
     tasked: Counter = Counter(item.parent_local_id for item in tasks if item.parent_local_id)
     used_ids = {item.local_id for item in proposal.items}
@@ -1242,20 +1286,7 @@ def _restore_unresolved_question_tasks(
         lead = max(group, key=lambda fact: len(str(fact.text)))
         detail = " ".join(str(lead.text).split())
         if parent is None:
-            findings.add(
-                Finding(
-                    severity=FindingSeverity.WARNING,
-                    code=FindingCode.UNRESOLVED_PREREQUISITE,
-                    message=(
-                        f"Unresolved source question has no clearly owning story, so no "
-                        f"clarification task was attached: {detail}"
-                    ),
-                    source_references=[
-                        _source_ref(fact.json_path, fact.field_name, excerpt=fact.text)
-                        for fact in group
-                    ],
-                )
-            )
+            _record_project_level_question(proposal, group, detail)
             continue
         title = f"Clarify unresolved question: {detail}"
         if len(title) > 180:
@@ -1289,6 +1320,7 @@ def _restore_unresolved_question_tasks(
             source, item
         ):
             proposal.items.remove(item)
+            _record_project_level_question(proposal, group, detail)
             continue
         injected.append(item)
         used_ids.add(local_id)
@@ -1484,7 +1516,11 @@ def _record_uncovered_request_outcomes(
     if proposal is not None:
         notes = list(proposal.uncertainties)
         notes.extend(note for item in proposal.items for note in item.uncertainties)
-        notes.extend(item.text for item in proposal.prerequisites)
+        # A question that validation kept does not cite the narrative excerpt, so it does not
+        # stand in for the model recording that uncertainty.
+        notes.extend(
+            item.text for item in proposal.prerequisites if not item._added_by_validation
+        )
         uncertainty_blob = " ".join(notes)
     covered_labels: set[str] = set()
     for section in source.narrative_sections:

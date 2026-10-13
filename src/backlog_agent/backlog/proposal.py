@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from backlog_agent.backlog.models import WorkItemType
 
@@ -88,6 +88,9 @@ class ProposedPrerequisite(BaseModel):
     text: str
     status: Literal["unresolved"] = "unresolved"
     provenance: list[ProposedProvenance] = Field(min_length=1)
+    # Set by application code (never by the model) when it keeps a source question that no
+    # single story owns. Not part of the serialized contract.
+    _added_by_validation: bool = PrivateAttr(default=False)
 
     @field_validator("text")
     @classmethod
