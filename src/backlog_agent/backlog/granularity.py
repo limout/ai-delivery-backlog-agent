@@ -236,7 +236,11 @@ def _phrase_is_dependency_context(text: str, phrase: str) -> bool:
 
 
 def leaked_owned_phrases(owner: Any, other: Any) -> list[str]:
-    """Title phrases owned by ``owner`` that appear in ``other``'s description or AC."""
+    """Title phrases owned by ``owner`` that appear in ``other``'s description or AC.
+
+    A shared object noun that already appears in both titles is not leaked work.
+    Independently testable outcomes may name the same entity with different actions.
+    """
 
     phrases = owned_title_phrases(owner)
     if not phrases:
@@ -244,6 +248,7 @@ def leaked_owned_phrases(owner: Any, other: Any) -> list[str]:
     body = _story_body_tokens(other)
     if not body:
         return []
+    other_title_tokens = _significant_tokens(getattr(other, "title", "") or "")
     other_text = " ".join(
         [
             getattr(other, "description", "") or "",
@@ -253,6 +258,8 @@ def leaked_owned_phrases(owner: Any, other: Any) -> list[str]:
     leaked: list[str] = []
     for phrase in sorted(phrases):
         if not _contains_phrase_tokens(body, phrase):
+            continue
+        if _contains_phrase_tokens(other_title_tokens, phrase):
             continue
         if _phrase_is_dependency_context(other_text, phrase):
             continue
@@ -340,7 +347,14 @@ def task_restates_parent(item: Any, parent: Any | None) -> bool:
         return True
     stripped = _BROAD_PREFIX.sub("", title).strip()
     stripped = re.sub(r"^(the|a|an)\s+", "", stripped)
-    return stripped == parent_title
+    if stripped == parent_title:
+        return True
+    task_tokens = {token for token in _significant_tokens(stripped) if len(token) >= 4}
+    parent_tokens = {token for token in _significant_tokens(parent_title) if len(token) >= 4}
+    if len(task_tokens) < 2 or len(parent_tokens) < 2:
+        return False
+    extra = task_tokens - parent_tokens
+    return not extra and len(task_tokens & parent_tokens) >= 2
 
 
 def looks_broad_task(item: Any, parent: Any | None = None) -> bool:

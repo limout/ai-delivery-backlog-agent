@@ -55,8 +55,10 @@ from backlog_agent.source.model import (
     classify_claim,
     classify_scope,
     fact_texts,
+    iter_source_statements,
     looks_like_delivery_process_constraint,
     looks_like_timeline_or_estimate,
+    statement_polarity,
 )
 from backlog_agent.source.request_headings import (
     heading_appears_represented,
@@ -896,9 +898,25 @@ def _cited_source_facts(source: NormalizedProjectSource, item: ProposedItem) -> 
 
 def _task_confirms_established_fact(source: NormalizedProjectSource, item: ProposedItem) -> bool:
     combined = f"{item.title} {item.description}"
+    cited = _cited_source_facts(source, item)
+    cited_statuses = {
+        classify_claim(fact.text, source, skip_path=fact.json_path) for fact in cited
+    }
+    if (
+        _VERIFY_VERB.search(combined)
+        and _EXISTENCE_CHECK.search(combined)
+        and (not cited or cited_statuses <= {"established"})
+    ):
+        polarities = {
+            statement_polarity(statement)
+            for _path, statement in iter_source_statements(source)
+            if claims_are_related(combined, statement) and statement_polarity(statement)
+        }
+        if polarities == {"established"}:
+            return True
     task_tokens = claim_content_tokens(combined)
     extra_detail = bool(task_tokens & _REMAINING_DETAIL_TOKENS)
-    for fact in _cited_source_facts(source, item):
+    for fact in cited:
         if classify_claim(fact.text, source, skip_path=fact.json_path) != "established":
             continue
         if extra_detail and not (claim_content_tokens(fact.text) & _REMAINING_DETAIL_TOKENS):

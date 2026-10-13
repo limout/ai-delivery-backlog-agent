@@ -650,6 +650,49 @@ def test_coherent_feature_with_narrow_provenance_is_not_split() -> None:
     assert FindingCode.FEATURE_CHILD_MISALIGNMENT not in _codes(sink)
 
 
+def test_independently_testable_outcomes_sharing_an_object_noun_are_not_overlap() -> None:
+    """Create versus track are distinct outcomes even when they share the same noun."""
+
+    create = _story(
+        "cbl_file",
+        "File a Maintenance Ticket",
+        description="A tenant files a maintenance ticket and receives a ticket number.",
+        acceptance_criteria=["A tenant can file a maintenance ticket."],
+        provenance=[_ref("$.requirements.functional_requirements[0]")],
+    )
+    track = _story(
+        "cbl_track",
+        "Track Maintenance Ticket Status",
+        description="A tenant tracks the status of a filed maintenance ticket until it is resolved.",
+        acceptance_criteria=["A tenant can see the current status of a maintenance ticket."],
+        provenance=[_ref("$.requirements.functional_requirements[1]")],
+    )
+    sink = _Sink()
+    record_granularity_findings(SimpleNamespace(), SimpleNamespace(items=[create, track]), sink)
+    assert FindingCode.OVERLAPPING_STORY_RESPONSIBILITY not in _codes(sink)
+    assert FindingCode.DUPLICATE_ACCEPTANCE_CRITERION not in _codes(sink)
+
+
+def test_library_search_and_hold_sharing_catalog_nouns_are_not_overlap() -> None:
+    search = _story(
+        "cbl_search",
+        "Search Catalog Holdings",
+        description="A member searches catalog holdings by title and matching holdings are listed.",
+        acceptance_criteria=["Matching catalog holdings are listed."],
+        provenance=[_ref("$.requirements.functional_requirements[0]")],
+    )
+    hold = _story(
+        "cbl_hold",
+        "Place a Hold on Catalog Holdings",
+        description="A member places a hold on an available catalog holding.",
+        acceptance_criteria=["A hold is recorded against the selected catalog holding."],
+        provenance=[_ref("$.requirements.functional_requirements[1]")],
+    )
+    sink = _Sink()
+    record_granularity_findings(SimpleNamespace(), SimpleNamespace(items=[search, hold]), sink)
+    assert FindingCode.OVERLAPPING_STORY_RESPONSIBILITY not in _codes(sink)
+
+
 def test_library_fixture_does_not_flag_sequenced_unrelated_domain() -> None:
     envelope = CopilotWorkflowResponseV1.model_validate(library_holds_envelope())
     _backlog, findings = decompose_backlog(envelope, MockProvider(_library_proposal()), repair=False)

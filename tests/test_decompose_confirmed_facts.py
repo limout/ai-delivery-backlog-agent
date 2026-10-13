@@ -229,6 +229,98 @@ def _campus_proposal(
     }
 
 
+def test_investigation_of_established_access_is_rejected_without_citing_the_dependency() -> None:
+    payload = campus_self_service_envelope()
+    proposal = _campus_proposal(payload, sandbox_task=False)
+    proposal["items"].append(
+        _item(
+            "task-exist",
+            "task",
+            "Investigate whether campus SIS API access exists",
+            parent="story-submit",
+            provenance=[
+                _src(
+                    "$.requirements.functional_requirements[0]",
+                    "functional_requirements",
+                    payload["requirements"]["functional_requirements"][0],
+                )
+            ],
+            title_origin="generated",
+            description="Confirm that API access and technical documentation are available.",
+        )
+    )
+    with pytest.raises(DecompositionValidationError) as exc:
+        decompose_backlog(
+            CopilotWorkflowResponseV1.model_validate(payload),
+            MockProvider(proposal),
+            repair=False,
+        )
+    assert any("confirm an established source fact" in error for error in exc.value.errors)
+
+
+def test_task_that_restates_the_parent_story_is_rejected() -> None:
+    payload = campus_self_service_envelope()
+    proposal = _campus_proposal(payload, sandbox_task=False)
+    proposal["items"].append(
+        _item(
+            "task-restate",
+            "task",
+            "Let a student submit an enrollment change request",
+            parent="story-submit",
+            provenance=[
+                _src(
+                    "$.requirements.functional_requirements[0]",
+                    "functional_requirements",
+                    payload["requirements"]["functional_requirements"][0],
+                )
+            ],
+            title_origin="generated",
+            description="The student submits an enrollment change request.",
+        )
+    )
+    with pytest.raises(DecompositionValidationError) as exc:
+        decompose_backlog(
+            CopilotWorkflowResponseV1.model_validate(payload),
+            MockProvider(proposal),
+            repair=False,
+        )
+    assert any("restates the parent" in error for error in exc.value.errors)
+
+
+def test_distinct_implementation_task_is_retained() -> None:
+    payload = campus_self_service_envelope()
+    proposal = _campus_proposal(payload, sandbox_task=False)
+    proposal["items"].append(
+        _item(
+            "task-map",
+            "task",
+            "Map enrollment change fields onto the documented SIS records interface",
+            parent="story-submit",
+            provenance=[
+                _src(
+                    "$.requirements.functional_requirements[0]",
+                    "functional_requirements",
+                    payload["requirements"]["functional_requirements"][0],
+                )
+            ],
+            title_origin="generated",
+            description=(
+                "Use the documented SIS interface to persist a submitted change "
+                "without inventing extra fields."
+            ),
+        )
+    )
+    backlog, _findings = decompose_backlog(
+        CopilotWorkflowResponseV1.model_validate(payload),
+        MockProvider(proposal),
+        repair=False,
+    )
+    assert any(
+        item.type is WorkItemType.TASK and "documented SIS" in item.title
+        for item in backlog.items
+    )
+
+
 def test_confirmed_dependency_rejects_existence_check_task() -> None:
     payload = campus_self_service_envelope()
     proposal = _campus_proposal(payload, confirm_access_task=True)

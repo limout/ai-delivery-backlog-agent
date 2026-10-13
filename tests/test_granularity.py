@@ -92,6 +92,10 @@ def test_broad_and_restated_tasks() -> None:
     assert looks_broad_task(_task("Implement the feature"), parent) is True
     assert looks_broad_task(_task("Build the entire journey")) is True
     assert task_restates_parent(_task("Implement the resident permit desk"), parent) is True
+    assert task_restates_parent(
+        _task("Let a resident use the resident permit desk"),
+        parent,
+    ) is True
     assert task_restates_parent(_task("Persist the decision letter PDF"), parent) is False
     assert looks_broad_task(_task("Persist the decision letter PDF"), parent) is False
 
