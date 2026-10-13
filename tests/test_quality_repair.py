@@ -78,6 +78,18 @@ def test_quality_repair_runs_once_when_first_proposal_is_valid() -> None:
     assert findings.llm_calls[1].accepted is True
 
 
+def test_empty_quality_repair_cannot_replace_a_valid_tree() -> None:
+    oversized = _proposal(_base_items(split_intake=False))
+    empty = {"items": [], "prerequisites": [], "uncertainties": []}
+    provider = MockProvider(responses=[oversized, empty])
+    backlog, findings = decompose_backlog(_envelope(), provider)
+    assert any(item.type.value == "user_story" for item in backlog.items)
+    assert findings.llm_calls[0].accepted is True
+    assert findings.llm_calls[1].accepted is False
+    assert any(item.code is FindingCode.QUALITY_REPAIR_REJECTED for item in findings.items)
+    assert any(item.code is FindingCode.OVERSIZED_STORY for item in findings.items)
+
+
 def test_quality_repair_keeps_first_valid_tree_if_second_fails_validation() -> None:
     oversized = _proposal(_base_items(split_intake=False))
     invalid = copy.deepcopy(oversized)

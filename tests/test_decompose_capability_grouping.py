@@ -428,6 +428,56 @@ def test_incremental_release_nfr_is_not_copied_onto_every_story() -> None:
     )
 
 
+def _finding_ids_exist_on_tree(backlog, findings) -> None:
+    ids = {item.canonical_id for item in backlog.items}
+    for finding in findings.items:
+        for canonical_id in finding.canonical_ids:
+            assert canonical_id in ids
+
+
+def test_zero_task_quality_repair_gets_grounded_task_and_matching_findings() -> None:
+    repaired = _grouped_proposal(sap_task=False, stripe_task=False)
+    provider = MockProvider(responses=[_catch_all_proposal(), repaired])
+    backlog, findings = decompose_backlog(_envelope(), provider)
+    counts = _counts(backlog)
+    assert counts["user_story"] == 9
+    assert counts["task"] >= 1
+    assert counts["task"] <= 3
+    titles = " ".join(item.title.lower() for item in backlog.items if item.type is WorkItemType.TASK)
+    assert "unspecified" in titles or "mapping" in titles
+    assert "access exists" not in titles
+    profile = next(item for item in backlog.items if "profile contact details" in item.title.lower())
+    assert profile.child_ids == []
+    assert any(
+        item.code is FindingCode.ATOMIC_STORY and profile.canonical_id in item.canonical_ids
+        for item in findings.items
+    )
+    assert not any(
+        item.code is FindingCode.MISSING_IMPLEMENTATION_DETAIL and profile.canonical_id in item.canonical_ids
+        for item in findings.items
+    )
+    sap = next(item for item in backlog.items if "SAP" in item.title)
+    assert sap.child_ids
+    assert not any(
+        item.code is FindingCode.MISSING_IMPLEMENTATION_DETAIL and sap.canonical_id in item.canonical_ids
+        for item in findings.items
+    )
+    assert not any(item.code is FindingCode.FEATURE_CHILD_MISALIGNMENT for item in findings.items)
+    _finding_ids_exist_on_tree(backlog, findings)
+    assert findings.llm_calls[-1].accepted is True
+
+
+def test_invalid_task_only_repair_is_not_accepted_as_an_empty_clean_tree() -> None:
+    repaired = _grouped_proposal(sap_task=False, stripe_task=False, confirm_access_task=True)
+    provider = MockProvider(responses=[_catch_all_proposal(), repaired])
+    backlog, findings = decompose_backlog(_envelope(), provider)
+    assert not any("Investigate whether SAP API access exists" in item.title for item in backlog.items)
+    assert any(item.type is WorkItemType.TASK for item in backlog.items)
+    sap = next(item for item in backlog.items if "SAP" in item.title)
+    assert sap.child_ids
+    _finding_ids_exist_on_tree(backlog, findings)
+
+
 def test_warnings_match_the_accepted_grouped_tree() -> None:
     backlog, findings = decompose_backlog(_envelope(), MockProvider(_grouped_proposal()), repair=False)
     sap = next(item for item in backlog.items if "SAP" in item.title)

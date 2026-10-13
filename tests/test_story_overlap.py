@@ -650,6 +650,83 @@ def test_coherent_feature_with_narrow_provenance_is_not_split() -> None:
     assert FindingCode.FEATURE_CHILD_MISALIGNMENT not in _codes(sink)
 
 
+def test_feature_description_covers_children_that_do_not_repeat_title_tokens() -> None:
+    viewing = _story(
+        "cbl_view",
+        "View Submitted Orders",
+        description="A customer opens submitted orders and sees the current list.",
+        provenance=[_ref("$.requirements.functional_requirements[0]")],
+    )
+    create = _story(
+        "cbl_create",
+        "Create a Service Request",
+        description="A customer creates a service request and receives an identifier.",
+        provenance=[_ref("$.requirements.functional_requirements[1]")],
+    )
+    track = _story(
+        "cbl_track",
+        "Track a Service Request",
+        description="A customer tracks an open service request until it is resolved.",
+        provenance=[_ref("$.requirements.functional_requirements[2]")],
+    )
+    feature = SimpleNamespace(
+        type=WorkItemType.FEATURE,
+        canonical_id="cbl_feat_ops",
+        title="Orders Viewing and Service Requests",
+        description=(
+            "Customers view submitted orders and can create and track service requests "
+            "from the same workspace."
+        ),
+        child_ids=(viewing.canonical_id, create.canonical_id, track.canonical_id),
+        provenance=(_ref("$.solution.key_capabilities[0]", "Orders and service requests"),),
+        acceptance_criteria=[],
+        test_requirements=[],
+        parent_id=None,
+        dependencies=[],
+    )
+    sink = _Sink()
+    record_granularity_findings(
+        SimpleNamespace(),
+        SimpleNamespace(items=[feature, viewing, create, track]),
+        sink,
+    )
+    assert FindingCode.FEATURE_CHILD_MISALIGNMENT not in _codes(sink)
+
+
+def test_course_enrollment_feature_covers_transcript_request_child() -> None:
+    enroll = _story(
+        "cbl_enroll",
+        "Submit a Course Enrollment Change",
+        description="A student submits a course enrollment change.",
+        provenance=[_ref("$.requirements.functional_requirements[0]")],
+    )
+    transcript = _story(
+        "cbl_transcript",
+        "Request an Official Transcript",
+        description="A student requests an official transcript after enrollment is recorded.",
+        provenance=[_ref("$.requirements.functional_requirements[1]")],
+    )
+    feature = SimpleNamespace(
+        type=WorkItemType.FEATURE,
+        canonical_id="cbl_feat_registrar",
+        title="Course Enrollment and Transcript Requests",
+        description="Students change course enrollment and request official transcripts.",
+        child_ids=(enroll.canonical_id, transcript.canonical_id),
+        provenance=(_ref("$.solution.key_capabilities[0]", "Enrollment and transcripts"),),
+        acceptance_criteria=[],
+        test_requirements=[],
+        parent_id=None,
+        dependencies=[],
+    )
+    sink = _Sink()
+    record_granularity_findings(
+        SimpleNamespace(),
+        SimpleNamespace(items=[feature, enroll, transcript]),
+        sink,
+    )
+    assert FindingCode.FEATURE_CHILD_MISALIGNMENT not in _codes(sink)
+
+
 def test_independently_testable_outcomes_sharing_an_object_noun_are_not_overlap() -> None:
     """Create versus track are distinct outcomes even when they share the same noun."""
 

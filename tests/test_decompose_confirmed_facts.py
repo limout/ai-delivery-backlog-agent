@@ -10,8 +10,8 @@ from backlog_agent.contracts.copilot_workflow_response_v1 import CopilotWorkflow
 from backlog_agent.findings.models import FindingCode
 from backlog_agent.llm.exceptions import DecompositionValidationError
 from backlog_agent.llm.mock import MockProvider
-from tests.copilot_envelopes import _complete
-from tests.test_decompose_generic import _item, _src
+from tests.copilot_envelopes import _complete, warehouse_picking_envelope
+from tests.test_decompose_generic import _item, _src, _warehouse_proposal
 
 
 def campus_self_service_envelope(*, contradict_access: bool = False) -> dict:
@@ -285,6 +285,38 @@ def test_task_that_restates_the_parent_story_is_rejected() -> None:
             repair=False,
         )
     assert any("restates the parent" in error for error in exc.value.errors)
+
+
+def test_warehouse_unconfirmed_detail_gets_a_task_on_the_matching_story() -> None:
+    payload = warehouse_picking_envelope()
+    proposal = _warehouse_proposal()
+    proposal["items"] = [
+        item
+        for item in proposal["items"]
+        if not str(item["local_id"]).startswith("task-")
+    ]
+    backlog, findings = decompose_backlog(
+        CopilotWorkflowResponseV1.model_validate(payload),
+        MockProvider(proposal),
+        repair=False,
+    )
+    scan = next(item for item in backlog.items if "scanning the bin" in item.title.lower())
+    assert scan.child_ids
+    child_titles = [
+        next(item for item in backlog.items if item.canonical_id == child_id).title.lower()
+        for child_id in scan.child_ids
+    ]
+    assert any("barcode" in title or "symbology" in title or "bin" in title for title in child_titles)
+    assert not any("exist" in title and "access" in title for title in child_titles)
+    next_pick = next(item for item in backlog.items if "next pick location" in item.title.lower())
+    assert next_pick.child_ids == []
+    assert any(
+        item.code is FindingCode.ATOMIC_STORY and next_pick.canonical_id in item.canonical_ids
+        for item in findings.items
+    )
+    ids = {item.canonical_id for item in backlog.items}
+    for finding in findings.items:
+        assert all(canonical_id in ids for canonical_id in finding.canonical_ids)
 
 
 def test_distinct_implementation_task_is_retained() -> None:

@@ -576,6 +576,59 @@ def _unrelated_child_pair_ratio(children: list[Any]) -> float:
     return unrelated / pairs
 
 
+def _phrase_in_scope(scope: str, phrase: str) -> bool:
+    """True when ``phrase`` appears in ``scope``, allowing a simple plural ``s``."""
+
+    haystack = f" {normalize_source_text(scope)} "
+    needle = normalize_source_text(phrase)
+    if len(needle) < 8:
+        return False
+    if f" {needle} " in haystack:
+        return True
+    if needle.endswith("s") and len(needle) > 8 and f" {needle[:-1]} " in haystack:
+        return True
+    if f" {needle}s " in haystack:
+        return True
+    return False
+
+
+def _child_covered_by_feature_scope(scope: str, child: Any, *, title_only: bool = False) -> bool:
+    """True when the feature's stated scope covers this child semantically.
+
+    Coverage is phrase and token based. A child does not have to repeat the
+    feature title's distinctive words when the feature title, description, or
+    source capability already names that child's outcome.
+    """
+
+    if not normalize_source_text(scope):
+        return False
+    child_tokens = (
+        _alignment_tokens(getattr(child, "title", "") or "")
+        if title_only
+        else _child_capability_tokens(child)
+    )
+    if _alignment_sets_share_term(_alignment_tokens(scope), child_tokens):
+        return True
+    title = getattr(child, "title", "") or ""
+    tokens = normalize_source_text(title).split()
+    for size in (3, 2):
+        if len(tokens) < size:
+            continue
+        for index in range(len(tokens) - size + 1):
+            gram = " ".join(tokens[index : index + size])
+            if _phrase_in_scope(scope, gram):
+                return True
+    return False
+
+
+def _feature_excerpt(feature: Any) -> str:
+    for reference in list(getattr(feature, "provenance", ()) or ()):
+        excerpt = getattr(reference, "excerpt", None) or ""
+        if excerpt:
+            return excerpt
+    return ""
+
+
 def _children_form_distinct_capability_clusters(children: list[Any]) -> list[list[Any]] | None:
     """Return child clusters when they do not share one capability area.
 
@@ -616,8 +669,18 @@ def _record_feature_child_alignment(_source: Any, items: list[Any], findings: An
         ]
         if not children:
             continue
+        excerpt = _feature_excerpt(feature)
+        title_scope = f"{getattr(feature, 'title', '')} {excerpt}"
+        full_scope = (
+            f"{getattr(feature, 'title', '')} {getattr(feature, 'description', '')} {excerpt}"
+        )
         distinct_clusters = _children_form_distinct_capability_clusters(children)
-        if distinct_clusters is not None:
+        title_covered = [
+            child
+            for child in children
+            if _child_covered_by_feature_scope(title_scope, child, title_only=True)
+        ]
+        if distinct_clusters is not None and len(title_covered) / len(children) < 0.75:
             cluster_titles = "; ".join(
                 ", ".join(repr(child.title) for child in cluster[:3])
                 for cluster in distinct_clusters[:4]
@@ -639,11 +702,6 @@ def _record_feature_child_alignment(_source: Any, items: list[Any], findings: An
                 )
             )
             continue
-        excerpt = ""
-        for reference in list(getattr(feature, "provenance", ()) or ()):
-            excerpt = getattr(reference, "excerpt", None) or ""
-            if excerpt:
-                break
         claimed = _alignment_tokens(
             f"{getattr(feature, 'title', '')} {getattr(feature, 'description', '')}"
         )
@@ -653,19 +711,16 @@ def _record_feature_child_alignment(_source: Any, items: list[Any], findings: An
         if len(claimed) < 2:
             continue
         matched = [
-            child
-            for child in children
-            if _alignment_sets_share_term(claimed, _alignment_tokens(_child_text(child)))
+            child for child in children if _child_covered_by_feature_scope(full_scope, child)
         ]
         provenance_matched = [
-            child
-            for child in children
-            if provenance_tokens
-            and _alignment_sets_share_term(provenance_tokens, _alignment_tokens(_child_text(child)))
+            child for child in children if _child_covered_by_feature_scope(excerpt, child)
         ]
-        coherent = len(matched) / len(children) >= 0.5
+        coherent = bool(matched) and len(matched) / len(children) >= 0.5
         provenance_grounded = not provenance_tokens or bool(provenance_matched)
         if coherent and provenance_grounded:
+            continue
+        if not claimed and not matched:
             continue
         outside = [child for child in children if child not in matched]
         outside_titles = ", ".join(repr(child.title) for child in outside[:4])

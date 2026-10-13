@@ -29,6 +29,7 @@ from backlog_agent.backlog.models import (
 )
 from backlog_agent.backlog.granularity import (
     functional_requirement_paths,
+    looks_like_implementation_work,
     record_granularity_findings,
     task_restates_parent,
 )
@@ -36,6 +37,7 @@ from backlog_agent.backlog.proposal import (
     BacklogProposal,
     ContentOrigin,
     ProposedItem,
+    ProposedProvenance,
     proposal_json_schema,
 )
 from backlog_agent.findings.models import (
@@ -240,6 +242,13 @@ def _try_materialize(source: NormalizedProjectSource, raw: Mapping[str, Any]) ->
     errors.extend(_execution_quality_errors(source, proposal))
     if not errors:
         _relocate_cross_cutting_constraints(source, proposal)
+        if not any(item.type is WorkItemType.TASK for item in proposal.items):
+            injected = _attach_grounded_implementation_tasks(source, proposal)
+            if injected:
+                extra = _execution_quality_errors(source, proposal)
+                if extra:
+                    drop = {item.local_id for item in injected}
+                    proposal.items = [item for item in proposal.items if item.local_id not in drop]
     if errors:
         return _MaterializeResult(ok=False, errors=errors, findings=findings, proposal=proposal)
 
@@ -894,6 +903,167 @@ def _cited_source_facts(source: NormalizedProjectSource, item: ProposedItem) -> 
         if fact is not None:
             found.append(fact)
     return found
+
+
+def _remaining_implementation_facts(source: NormalizedProjectSource) -> list[Any]:
+    remaining: list[Any] = []
+    for fact in (*source.unknowns, *source.blocking_dependencies):
+        if classify_claim(fact.text, source, skip_path=fact.json_path) == "established":
+            continue
+        remaining.append(fact)
+    return remaining
+
+
+_TARGET_STOPWORDS = frozenset(
+    {
+        "available",
+        "customer",
+        "customers",
+        "existing",
+        "let",
+        "member",
+        "members",
+        "must",
+        "operator",
+        "operators",
+        "resident",
+        "shall",
+        "specified",
+        "student",
+        "students",
+        "system",
+        "tenant",
+        "unconfirmed",
+        "unspecified",
+        "user",
+        "users",
+    }
+)
+
+
+def _distinctive_tokens(text: str) -> set[str]:
+    return {token for token in claim_content_tokens(text) if token not in _TARGET_STOPWORDS}
+
+
+def _token_sets_share_stem(left: set[str], right: set[str]) -> bool:
+    left = {token for token in left if token not in _TARGET_STOPWORDS}
+    right = {token for token in right if token not in _TARGET_STOPWORDS}
+    if left & right:
+        return True
+    for token in left:
+        for other in right:
+            if min(len(token), len(other)) < 3:
+                continue
+            if token.endswith("s") and token[:-1] == other:
+                return True
+            if other.endswith("s") and other[:-1] == token:
+                return True
+    return False
+
+
+def _matched_tokens(left: set[str], right: set[str]) -> set[str]:
+    left = {token for token in left if token not in _TARGET_STOPWORDS}
+    right = {token for token in right if token not in _TARGET_STOPWORDS}
+    matched = set(left & right)
+    for token in left:
+        for other in right:
+            if min(len(token), len(other)) < 3:
+                continue
+            if token.endswith("s") and token[:-1] == other:
+                matched.add(token)
+            if other.endswith("s") and other[:-1] == token:
+                matched.add(other)
+    return matched
+
+
+def _fact_targets_story(fact: Any, story: ProposedItem) -> bool:
+    blob = f"{story.title} {story.description}"
+    if claims_are_related(fact.text, blob) or claims_are_related(blob, fact.text):
+        return True
+    title_hits = _matched_tokens(_distinctive_tokens(fact.text), _distinctive_tokens(story.title))
+    if title_hits:
+        return True
+    blob_hits = _matched_tokens(_distinctive_tokens(fact.text), _distinctive_tokens(blob))
+    return len(blob_hits) >= 2 or any(len(token) >= 6 for token in blob_hits)
+
+
+def _attach_grounded_implementation_tasks(
+    source: NormalizedProjectSource, proposal: BacklogProposal
+) -> list[ProposedItem]:
+    """Add bounded tasks for unresolved source work. Never re-check established facts."""
+
+    stories = [item for item in proposal.items if item.type is WorkItemType.USER_STORY]
+    tasked = {
+        item.parent_local_id
+        for item in proposal.items
+        if item.type is WorkItemType.TASK and item.parent_local_id
+    }
+    cited_paths = {
+        reference.json_path
+        for item in proposal.items
+        if item.type is WorkItemType.TASK
+        for reference in item.provenance
+    }
+    used_ids = {item.local_id for item in proposal.items}
+    used_titles = {normalize_source_text(item.title) for item in proposal.items}
+    injected: list[ProposedItem] = []
+    for index, fact in enumerate(_remaining_implementation_facts(source)):
+        if fact.json_path in cited_paths:
+            continue
+        candidates = [story for story in stories if _fact_targets_story(fact, story)]
+        if not candidates:
+            continue
+        titled = [
+            story
+            for story in candidates
+            if _token_sets_share_stem(_distinctive_tokens(fact.text), _distinctive_tokens(story.title))
+        ]
+        pool = titled or candidates
+        impl = [story for story in pool if looks_like_implementation_work(story)]
+        parent = next((story for story in impl if story.local_id not in tasked), None)
+        if parent is None:
+            parent = next((story for story in pool if story.local_id not in tasked), None)
+        if parent is None:
+            continue
+        detail = " ".join(str(fact.text).split())
+        title = f"Clarify remaining implementation detail: {detail}"
+        if len(title) > 180:
+            title = title[:177].rstrip() + "..."
+        if normalize_source_text(title) in used_titles or len(normalize_source_text(title)) < 12:
+            continue
+        local_id = f"task-grounded-{index + 1}"
+        suffix = 2
+        while local_id in used_ids:
+            local_id = f"task-grounded-{index + 1}-{suffix}"
+            suffix += 1
+        item = ProposedItem(
+            local_id=local_id,
+            type=WorkItemType.TASK,
+            title=title,
+            description=(
+                "Resolve this remaining source detail for the parent story. "
+                "Do not treat a confirmed source fact as still unknown."
+            ),
+            parent_local_id=parent.local_id,
+            provenance=[
+                ProposedProvenance(
+                    json_path=fact.json_path,
+                    field_name=fact.field_name,
+                    excerpt=fact.text,
+                )
+            ],
+            title_origin=ContentOrigin.GENERATED,
+            description_origin=ContentOrigin.GENERATED,
+        )
+        if task_restates_parent(item, parent) or _task_confirms_established_fact(source, item):
+            continue
+        proposal.items.append(item)
+        injected.append(item)
+        used_ids.add(local_id)
+        used_titles.add(normalize_source_text(title))
+        tasked.add(parent.local_id)
+        cited_paths.add(fact.json_path)
+    return injected
 
 
 def _task_confirms_established_fact(source: NormalizedProjectSource, item: ProposedItem) -> bool:
