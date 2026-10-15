@@ -29,11 +29,16 @@ from backlog_agent.backlog.models import (
 )
 from backlog_agent.backlog.granularity import (
     _QUESTION_FRAME_WORDS,
-    is_investigation_task,
+    _is_acceptance_criterion_path,
+    _is_functional_requirement_path,
+    _significant_tokens,
     functional_requirement_paths,
+    is_investigation_task,
     item_represents_requirement,
+    leaked_owned_phrases,
     looks_like_implementation_work,
     record_granularity_findings,
+    requirement_outcomes,
     task_restates_parent,
 )
 from backlog_agent.backlog.quality_gate import (
@@ -154,6 +159,9 @@ def decompose_backlog(
     hard- and quality-repaired trees. A structurally valid tree may be returned
     with ``accepted=false`` when no better candidate exists. The unresolved
     defects stay in the findings. Advisory findings never decide acceptance.
+    Duplicate acceptance criteria and overlapping story responsibilities are
+    blocking when they remain after scoping. Missing implementation detail stays
+    advisory.
     """
 
     source = load_project_source(envelope)
@@ -254,6 +262,7 @@ def _try_materialize(source: NormalizedProjectSource, raw: Mapping[str, Any]) ->
     errors.extend(_execution_quality_errors(source, proposal))
     if not errors:
         _relocate_cross_cutting_constraints(source, proposal)
+        _scope_shared_story_outcomes(proposal)
         had_tasks = any(item.type is WorkItemType.TASK for item in proposal.items)
         _restore_unresolved_question_tasks(source, proposal)
         if not had_tasks:
@@ -2020,6 +2029,286 @@ def _mark_accepted(calls: list[LlmCallDiagnostic], kind: str) -> None:
 
 def _error_owner(error: str) -> str:
     return error.split(":", 1)[0].split(".", 1)[0].strip()
+
+
+def _scope_shared_story_outcomes(proposal: BacklogProposal) -> None:
+    """Give each story a criterion and description limited to its own outcome.
+
+    A compound source criterion is not copied onto every story. Scoped text is
+    marked generated. A criterion that cannot be split from grounded source
+    text is left unchanged so the quality check can still block acceptance.
+    """
+
+    stories = [item for item in proposal.items if item.type is WorkItemType.USER_STORY]
+    if len(stories) < 2:
+        return
+    _scope_shared_criteria(stories)
+    _strip_leaked_story_responsibilities(stories)
+
+
+def _scope_shared_criteria(stories: list[ProposedItem]) -> None:
+    grouped: dict[str, list[tuple[ProposedItem, int]]] = {}
+    for story in stories:
+        seen: set[str] = set()
+        for index, criterion in enumerate(story.acceptance_criteria):
+            key = normalize_source_text(criterion)
+            if len(key) < 12 or key in seen:
+                continue
+            seen.add(key)
+            grouped.setdefault(key, []).append((story, index))
+    for key, members in grouped.items():
+        unique = []
+        seen_ids: set[str] = set()
+        for story, index in members:
+            if story.local_id in seen_ids:
+                continue
+            seen_ids.add(story.local_id)
+            unique.append((story, index))
+        if len(unique) < 2:
+            continue
+        stories_only = [story for story, _index in unique]
+        sample = stories_only[0].acceptance_criteria[unique[0][1]]
+        replacements = _scoped_criterion_texts(stories_only, sample)
+        if not replacements:
+            continue
+        changed: list[ProposedItem] = []
+        for story, index in unique:
+            replacement = replacements.get(story.local_id)
+            if replacement is None or normalize_source_text(replacement) == key:
+                continue
+            story.acceptance_criteria[index] = replacement
+            if index < len(story.acceptance_criteria_origins):
+                story.acceptance_criteria_origins[index] = _criterion_origin(
+                    story, replacement
+                )
+            changed.append(story)
+        _drop_shared_criterion_paths(changed, key)
+
+
+def _scoped_criterion_texts(
+    stories: list[ProposedItem], criterion: str
+) -> dict[str, str] | None:
+    """Return replacement text only for stories whose copy can be grounded.
+
+    Every clause of a compound criterion must map to a story. A single-outcome
+    criterion stays verbatim on its one best-matching story. Anything else is
+    left unchanged.
+    """
+
+    clauses = _criterion_clauses(criterion)
+    if len(clauses) >= 2:
+        assigned = _assign_clauses(stories, clauses)
+        if (
+            assigned is not None
+            and len(assigned) == len(stories)
+            and len({normalize_source_text(text) for text in assigned.values()}) == len(stories)
+        ):
+            return {local_id: _as_sentence(text) for local_id, text in assigned.items()}
+    owner_id = _unique_criterion_owner(stories, criterion)
+    if owner_id is None:
+        return None
+    shared = normalize_source_text(criterion)
+    replacements: dict[str, str] = {}
+    seen = {shared}
+    for story in stories:
+        if story.local_id == owner_id:
+            continue
+        excerpt = _functional_excerpt(story)
+        if not excerpt:
+            return None
+        key = normalize_source_text(excerpt)
+        if key in seen:
+            return None
+        seen.add(key)
+        replacements[story.local_id] = _as_sentence(excerpt)
+    return replacements or None
+
+
+def _criterion_clauses(text: str) -> list[str]:
+    parts = [
+        part.strip(" .;")
+        for part in re.split(r"\s+(?:and|or)\s+", text, flags=re.IGNORECASE)
+        if len(_significant_tokens(part)) >= 2
+    ]
+    if len(parts) >= 2:
+        return parts
+    outcomes = list(requirement_outcomes(text))
+    if len(outcomes) >= 2:
+        return outcomes
+    return [text.strip()]
+
+
+def _story_focus_tokens(story: ProposedItem) -> set[str]:
+    tokens = set(_significant_tokens(story.title))
+    excerpt = _functional_excerpt(story)
+    if excerpt:
+        tokens.update(_significant_tokens(excerpt))
+    return tokens
+
+
+def _assign_clauses(
+    stories: list[ProposedItem], clauses: list[str]
+) -> dict[str, str] | None:
+    focus = {story.local_id: _story_focus_tokens(story) for story in stories}
+    shared = set.intersection(*focus.values()) if focus else set()
+    distinctive = {local_id: tokens - shared for local_id, tokens in focus.items()}
+    chosen: dict[str, list[str]] = {story.local_id: [] for story in stories}
+    for clause in clauses:
+        clause_tokens = set(_significant_tokens(clause))
+        scored = [
+            (len(clause_tokens & distinctive[story.local_id]), story.local_id)
+            for story in stories
+        ]
+        scored.sort(reverse=True)
+        if not scored or scored[0][0] <= 0:
+            return None
+        if len(scored) > 1 and scored[0][0] == scored[1][0]:
+            return None
+        chosen[scored[0][1]].append(clause)
+    if any(not clauses_for_story for clauses_for_story in chosen.values()):
+        return None
+    return {local_id: " and ".join(parts) for local_id, parts in chosen.items()}
+
+
+def _unique_criterion_owner(stories: list[ProposedItem], criterion: str) -> str | None:
+    tokens = set(_significant_tokens(criterion))
+    if not tokens:
+        return None
+    scored = [
+        (len(tokens & _story_focus_tokens(story)), story.local_id) for story in stories
+    ]
+    scored.sort(reverse=True)
+    if scored[0][0] <= 0:
+        return None
+    if len(scored) > 1 and scored[0][0] == scored[1][0]:
+        return None
+    return scored[0][1]
+
+
+def _functional_excerpt(story: ProposedItem) -> str | None:
+    for reference in story.provenance:
+        if _is_functional_requirement_path(reference.json_path) and reference.excerpt:
+            return reference.excerpt
+    return None
+
+
+def _criterion_origin(story: ProposedItem, text: str) -> ContentOrigin:
+    wanted = normalize_source_text(text)
+    for reference in story.provenance:
+        excerpt = reference.excerpt or ""
+        if (
+            _is_acceptance_criterion_path(reference.json_path)
+            and excerpt
+            and normalize_source_text(excerpt) == wanted
+        ):
+            return ContentOrigin.SOURCE
+    return ContentOrigin.GENERATED
+
+
+def _drop_shared_criterion_paths(stories: list[ProposedItem], criterion_key: str) -> None:
+    for story in stories:
+        kept = []
+        for reference in story.provenance:
+            excerpt = normalize_source_text(reference.excerpt or "")
+            if _is_acceptance_criterion_path(reference.json_path) and excerpt == criterion_key:
+                continue
+            kept.append(reference)
+        if kept:
+            story.provenance = kept
+
+
+def _strip_leaked_story_responsibilities(stories: list[ProposedItem]) -> None:
+    for _pass in range(2):
+        changed = False
+        for owner in stories:
+            for other in stories:
+                if owner.local_id == other.local_id:
+                    continue
+                for phrase in leaked_owned_phrases(owner, other):
+                    keep_tokens = _story_focus_tokens(other)
+                    rewritten = _without_owned_phrase(other.description, phrase, keep_tokens)
+                    if rewritten and rewritten != other.description:
+                        other.description = rewritten
+                        other.description_origin = ContentOrigin.GENERATED
+                        changed = True
+                    criteria, origins, edited = _criteria_without_phrase(
+                        other.acceptance_criteria,
+                        other.acceptance_criteria_origins,
+                        phrase,
+                        keep_tokens,
+                    )
+                    if edited:
+                        other.acceptance_criteria = criteria
+                        other.acceptance_criteria_origins = origins
+                        changed = True
+        if not changed:
+            return
+
+
+def _criteria_without_phrase(
+    criteria: list[str],
+    origins: list[ContentOrigin],
+    phrase: str,
+    keep_tokens: set[str],
+) -> tuple[list[str], list[ContentOrigin], bool]:
+    kept_text: list[str] = []
+    kept_origins: list[ContentOrigin] = []
+    edited = False
+    for index, criterion in enumerate(criteria):
+        origin = origins[index] if index < len(origins) else ContentOrigin.GENERATED
+        rewritten = _without_owned_phrase(criterion, phrase, keep_tokens)
+        if rewritten == criterion:
+            kept_text.append(criterion)
+            kept_origins.append(origin)
+            continue
+        if not rewritten:
+            kept_text.append(criterion)
+            kept_origins.append(origin)
+            continue
+        edited = True
+        kept_text.append(_as_sentence(rewritten))
+        kept_origins.append(ContentOrigin.GENERATED)
+    if not kept_text:
+        return criteria, origins, False
+    return kept_text, kept_origins, edited
+
+
+def _without_owned_phrase(text: str, phrase: str, keep_tokens: set[str]) -> str:
+    if not text:
+        return text
+    needle = normalize_source_text(phrase)
+    if needle not in normalize_source_text(text):
+        return text
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    rewritten: list[str] = []
+    changed = False
+    for sentence in sentences:
+        if needle not in normalize_source_text(sentence):
+            rewritten.append(sentence)
+            continue
+        chunks = re.split(r"\s+\band\b\s+", sentence, flags=re.IGNORECASE)
+        if len(chunks) <= 1:
+            return ""
+        kept = [chunk.strip(" ,;") for chunk in chunks if needle not in normalize_source_text(chunk)]
+        if not kept or len(kept) == len(chunks):
+            return ""
+        if any(not (set(_significant_tokens(chunk)) & keep_tokens) for chunk in kept):
+            return ""
+        rewritten.append(" ".join(kept))
+        changed = True
+    if not changed or not rewritten:
+        return ""
+    return " ".join(rewritten)
+
+
+def _as_sentence(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", text).strip(" .,;")
+    if not cleaned:
+        return cleaned
+    cleaned = cleaned[0].upper() + cleaned[1:]
+    if cleaned[-1] not in ".!?":
+        cleaned += "."
+    return cleaned
 
 
 def _relocate_cross_cutting_constraints(

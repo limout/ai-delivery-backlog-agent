@@ -22,6 +22,10 @@ not be conflated:
     * an uncovered functional requirement (``UNCOVERED_FUNCTIONAL_REQUIREMENT``).
       Hard validation already rejects this, it is listed so the contract holds
       if that rule is ever relaxed;
+    * a source acceptance criterion copied onto stories that do not share one
+      outcome (``DUPLICATE_ACCEPTANCE_CRITERION``);
+    * a story whose description or acceptance criteria still claim an outcome
+      owned by a different story (``OVERLAPPING_STORY_RESPONSIBILITY``);
     * a **material hierarchy defect**: a hierarchy or parenting finding that
       the detector itself rated high confidence and marked with
       ``MATERIAL_HIERARCHY_PREFIX``. The detectors only set the marker when the
@@ -43,10 +47,12 @@ not be conflated:
     Everything else: weaker feature grouping signals (compound titles, partial
     provenance or description overlap, only two clusters), uncertain parent
     assignments (the Task shares some subject with its parent), oversized stories,
-    overlapping responsibilities, missing implementation detail, empty acceptance
-    criteria, uncertainty and prerequisite notes. They are reported, and some of
-    them may spend the single repair call, but they never decide acceptance. They
-    rest on token heuristics and a candidate must not be rejected for them.
+    missing implementation detail, empty acceptance criteria, uncertainty and
+    prerequisite notes. They are reported, and some of them may spend the single
+    repair call, but they never decide acceptance. They rest on token heuristics
+    and a candidate must not be rejected for them. Duplicate criteria and
+    overlapping story responsibilities are not in this group: once the
+    deterministic scope step still reports them, they block acceptance.
 
 ``accepted``
     A candidate is *accepted* only when it passed hard validation **and** carries
@@ -66,6 +72,8 @@ BLOCKING_QUALITY_CODES: frozenset[FindingCode] = frozenset(
     {
         FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT,
         FindingCode.UNCOVERED_NON_FUNCTIONAL_REQUIREMENT,
+        FindingCode.DUPLICATE_ACCEPTANCE_CRITERION,
+        FindingCode.OVERLAPPING_STORY_RESPONSIBILITY,
     }
 )
 

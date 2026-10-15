@@ -300,35 +300,31 @@ def _merged_pickup_proposal() -> dict:
 
 def test_overlap_findings_include_proposal_local_ids() -> None:
     provider = MockProvider(_pickup_proposal(overlapping=True))
-    _backlog, findings = decompose_backlog(_pickup_envelope(), provider, repair=False)
-    overlap = [
-        item for item in findings.items if item.code is FindingCode.OVERLAPPING_STORY_RESPONSIBILITY
-    ]
-    assert overlap
-    assert set(overlap[0].local_ids) == {"story-hold", "story-notice"}
-    assert len(overlap[0].canonical_ids) == 2
-    assert all(canonical_id.startswith("cbl_") for canonical_id in overlap[0].canonical_ids)
-    message = overlap[0].message
-    assert "local_id=story-hold" in message
-    assert "local_id=story-notice" in message
-    assert "Place Hold On Available Copy" in message
-    assert "Send Pickup Notice via Notice Service" in message
-    assert "pickup notice" in message
-    assert "Remediation:" in message
+    backlog, findings = decompose_backlog(_pickup_envelope(), provider, repair=False)
+    hold = next(item for item in backlog.items if item.title == "Place Hold On Available Copy")
+    assert "pickup notice" not in " ".join(hold.acceptance_criteria).casefold()
+    assert "pickup notice" not in hold.description.casefold()
+    assert not any(
+        item.code is FindingCode.OVERLAPPING_STORY_RESPONSIBILITY for item in findings.items
+    )
+    assert not any(
+        item.code is FindingCode.DUPLICATE_ACCEPTANCE_CRITERION for item in findings.items
+    )
 
 
 def test_quality_repair_prompt_identifies_proposal_items_from_overlap_finding() -> None:
     overlapping = _pickup_proposal(overlapping=True)
     repaired = _pickup_proposal(overlapping=False)
     provider = MockProvider(responses=[overlapping, repaired])
-    decompose_backlog(_pickup_envelope(), provider)
-    assert len(provider.calls) == 2
+    _backlog, findings = decompose_backlog(_pickup_envelope(), provider)
+    assert not any(
+        item.code is FindingCode.OVERLAPPING_STORY_RESPONSIBILITY for item in findings.items
+    )
+    if len(provider.calls) == 1:
+        return
     quality_prompt = provider.calls[1][0]
-    assert FindingCode.OVERLAPPING_STORY_RESPONSIBILITY.value in quality_prompt
-    assert "local_id=story-hold" in quality_prompt
-    assert "local_id=story-notice" in quality_prompt
-    assert '"local_ids"' in quality_prompt
-    assert "story-hold" in quality_prompt
+    assert "actionable quality findings" in quality_prompt
+    assert FindingCode.OVERLAPPING_STORY_RESPONSIBILITY.value not in quality_prompt
     assert "never treat a canonical" in quality_prompt.lower()
     assert "Previously covered functional requirements" in quality_prompt
     assert "$.requirements.functional_requirements[0]" in quality_prompt
@@ -387,17 +383,13 @@ def test_remaining_overlap_findings_describe_the_returned_tree() -> None:
     backlog, findings = decompose_backlog(_pickup_envelope(), provider)
 
     hold = next(item for item in backlog.items if item.title == "Place Hold On Available Copy")
-    overlap = [
-        item for item in findings.items if item.code is FindingCode.OVERLAPPING_STORY_RESPONSIBILITY
-    ]
-    assert overlap
-    assert set(overlap[0].local_ids) == {"story-hold", "story-notice"}
-    assert hold.canonical_id in overlap[0].canonical_ids
-    assert "pickup notice" in " ".join(hold.acceptance_criteria).lower()
-    assert "local_id=story-hold" in overlap[0].message
-    assert findings.llm_calls[1].kind == "quality_repair"
-    assert findings.llm_calls[1].accepted is True
-    assert any(item.code is FindingCode.OVERLAPPING_STORY_RESPONSIBILITY for item in findings.items)
+    assert "pickup notice" not in " ".join(hold.acceptance_criteria).casefold()
+    assert "pickup notice" not in hold.description.casefold()
+    assert not any(
+        item.code is FindingCode.OVERLAPPING_STORY_RESPONSIBILITY for item in findings.items
+    )
+    assert findings.llm_calls[-1].accepted is True
+    assert findings.llm_calls[-1].blocking_quality_findings == 0
 
 
 def test_merged_distinct_functional_requirements_are_rejected() -> None:
@@ -585,6 +577,11 @@ def test_hard_repair_is_the_only_repair_and_keeps_remaining_warnings() -> None:
     assert findings.llm_calls[0].accepted is False
     assert findings.llm_calls[1].accepted is True
     assert findings.llm_calls[1].validation_passed is True
-    assert any(item.code is FindingCode.DUPLICATE_ACCEPTANCE_CRITERION for item in findings.items)
+    assert findings.llm_calls[1].blocking_quality_findings == 0
+    assert not any(item.code is FindingCode.DUPLICATE_ACCEPTANCE_CRITERION for item in findings.items)
+    assert any(
+        item.code is FindingCode.GENERATED_CONTENT or item.code is FindingCode.MISSING_IMPLEMENTATION_DETAIL
+        for item in findings.items
+    )
     assert not any(item.code is FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT for item in findings.items)
     assert any(item.title == "Place Hold On Available Copy" for item in backlog.items)

@@ -152,6 +152,8 @@ def test_blocking_and_advisory_findings_are_distinguished() -> None:
     blocking = [
         _finding(FindingCode.UNCOVERED_NON_FUNCTIONAL_REQUIREMENT),
         _finding(FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT),
+        _finding(FindingCode.DUPLICATE_ACCEPTANCE_CRITERION),
+        _finding(FindingCode.OVERLAPPING_STORY_RESPONSIBILITY),
         _finding(
             FindingCode.MISSING_VERIFICATION_COVERAGE,
             "User story 'x' does not verify every outcome in its cited source requirement",
@@ -162,8 +164,7 @@ def test_blocking_and_advisory_findings_are_distinguished() -> None:
         _finding(FindingCode.AMBIGUOUS_DECOMPOSITION),
         _finding(FindingCode.OVER_DECOMPOSITION),
         _finding(FindingCode.OVERSIZED_STORY),
-        _finding(FindingCode.OVERLAPPING_STORY_RESPONSIBILITY),
-        _finding(FindingCode.DUPLICATE_ACCEPTANCE_CRITERION),
+        _finding(FindingCode.MISSING_IMPLEMENTATION_DETAIL),
         _finding(FindingCode.UNRESOLVED_PREREQUISITE),
         _finding(FindingCode.UNCOVERED_REQUEST_OUTCOME),
         _finding(FindingCode.PLANNING_CONSTRAINT, severity=FindingSeverity.INFO),
