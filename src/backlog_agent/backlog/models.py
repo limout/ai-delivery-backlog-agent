@@ -12,7 +12,7 @@ from typing import Annotated, Any, Literal, Union
 
 
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 
 
@@ -131,6 +131,15 @@ class SourceReference(BaseModel):
     field_name: str | None = None
 
     excerpt: str | None = None
+
+    equivalent_references: list["SourceReference"] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def _omit_empty_equivalent_references(self, handler):
+        data = handler(self)
+        if isinstance(data, dict) and not data.get("equivalent_references"):
+            data.pop("equivalent_references", None)
+        return data
 
 
 

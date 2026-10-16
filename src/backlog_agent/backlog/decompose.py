@@ -21,6 +21,7 @@ from backlog_agent.backlog.generate import (
     resolve_json_path,
 )
 from backlog_agent.backlog.ids import item_identity_key, normalize_source_text
+from backlog_agent.backlog.provenance import collapse_equivalent_provenance
 from backlog_agent.backlog.models import (
     ApprovalState,
     CanonicalBacklogV1,
@@ -490,6 +491,8 @@ def _to_canonical(
         provenance = [
             _source_ref(ref.json_path, ref.field_name, excerpt=ref.excerpt) for ref in item.provenance
         ]
+        if item.type is WorkItemType.EPIC:
+            provenance = collapse_equivalent_provenance(provenance)
         prepared.append((item, canonical_id, provenance))
 
     children: dict[str, list[str]] = {canonical_id: [] for _item, canonical_id, _p in prepared}
