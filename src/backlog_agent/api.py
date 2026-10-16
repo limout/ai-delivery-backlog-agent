@@ -49,8 +49,33 @@ def _tokens_match(provided: str, expected: str) -> bool:
     return hmac.compare_digest(left, right)
 
 
-def _error(status_code: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"error": code, "message": message})
+def _error(
+    status_code: int,
+    code: str,
+    message: str,
+    validation_errors: list[dict[str, str]] | None = None,
+) -> JSONResponse:
+    content: dict[str, Any] = {"error": code, "message": message}
+    if validation_errors:
+        content["validation_errors"] = validation_errors
+    return JSONResponse(status_code=status_code, content=content)
+
+
+def _validation_error_items(exc: ValidationError) -> list[dict[str, str]]:
+    """Field location, message, and type. Submitted values are omitted."""
+    items: list[dict[str, str]] = []
+    for err in exc.errors():
+        loc = ".".join(str(part) for part in err.get("loc", ()) if not isinstance(part, dict))
+        items.append(
+            {
+                "loc": loc[:180],
+                "msg": str(err.get("msg") or "")[:180],
+                "type": str(err.get("type") or "")[:80],
+            }
+        )
+        if len(items) >= 8:
+            break
+    return items
 
 
 def require_api_token(request: Request) -> None:
@@ -99,13 +124,17 @@ def generate(
 ) -> dict[str, Any] | JSONResponse:
     try:
         envelope = CopilotWorkflowResponseV1.model_validate(payload)
-    except ValidationError:
+    except ValidationError as exc:
+        errors = _validation_error_items(exc)
+        _LOG.info("generate rejected invalid envelope errors=%s", errors)
         return _error(
             422,
             "INVALID_ENVELOPE",
             "Request must be a COMPLETE copilot.workflow_response.v1 JSON envelope.",
+            errors,
         )
     except (TypeError, ValueError):
+        _LOG.info("generate rejected envelope that could not be validated")
         return _error(
             422,
             "INVALID_ENVELOPE",
@@ -116,11 +145,17 @@ def generate(
         provider = get_provider()
         backlog, findings = decompose_backlog(envelope, provider)
         return serialize_preview(backlog, findings)
-    except DecompositionValidationError:
+    except DecompositionValidationError as exc:
+        errors = [
+            {"loc": "", "msg": str(item)[:180], "type": "decomposition"}
+            for item in exc.errors[:8]
+        ]
+        _LOG.info("generate rejected decomposition errors=%s", [item["msg"] for item in errors])
         return _error(
             422,
             "DECOMPOSITION_FAILED",
             "LLM backlog proposal failed independent validation.",
+            errors,
         )
     except AIProviderConfigError:
         return _error(

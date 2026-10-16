@@ -105,9 +105,15 @@ def test_generate_rejects_incomplete_status(client: TestClient, status: str) -> 
 
 
 def test_generate_rejects_invalid_envelope(client: TestClient) -> None:
-    response = client.post("/generate", json={"user_request": "not a contract"}, headers=_auth())
+    response = client.post("/generate", json={"user_request": "SENTINEL-not-a-contract"}, headers=_auth())
     assert response.status_code == 422
-    assert response.json()["error"] == "INVALID_ENVELOPE"
+    body = response.json()
+    assert body["error"] == "INVALID_ENVELOPE"
+    errors = body["validation_errors"]
+    assert errors
+    assert all(set(item) == {"loc", "msg", "type"} for item in errors)
+    assert any(item["loc"] and item["type"] for item in errors)
+    assert "SENTINEL-not-a-contract" not in response.text
 
 
 def test_generate_provider_failure_is_controlled(monkeypatch: pytest.MonkeyPatch) -> None:
