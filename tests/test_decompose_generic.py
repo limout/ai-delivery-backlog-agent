@@ -677,20 +677,78 @@ def test_invalid_title_origin_triggers_one_hard_repair_that_keeps_coverage() -> 
     assert any("documentation is available" in item.title for item in backlog.items)
 
 
-def test_hard_repair_that_loses_structured_fr_coverage_is_rejected() -> None:
+def _repair_that_moves_notify_onto_a_feature() -> dict:
+    payload = library_holds_envelope()
+    repaired = _library_proposal(cover_notify=False)
+    feature = next(item for item in repaired["items"] if item["local_id"] == "feat-hold")
+    feature["provenance"].append(
+        _src(
+            "$.requirements.functional_requirements[2]",
+            "functional_requirements",
+            payload["requirements"]["functional_requirements"][2],
+        )
+    )
+    return repaired
+
+
+def test_hard_repair_restores_user_story_coverage_moved_onto_a_feature() -> None:
     payload = library_holds_envelope()
     initial = _library_proposal()
     search = next(item for item in initial["items"] if item["local_id"] == "story-search")
     search["title"] = "Unrelated quarterly billing export"
     search["title_origin"] = "source"
-    provider = MockProvider(responses=[initial, _library_proposal(cover_notify=False)])
+    provider = MockProvider(responses=[initial, _repair_that_moves_notify_onto_a_feature()])
+
+    backlog, findings = decompose_backlog(
+        CopilotWorkflowResponseV1.model_validate(payload), provider
+    )
+
+    assert len(provider.calls) == 2
+    prompt = provider.calls[1][0]
+    assert "must remain on a user_story" in prompt
+    assert "$.requirements.functional_requirements[2]" in prompt
+    assert "Citing the path only on an epic, feature, or task does not preserve coverage" in prompt
+    assert [call.kind for call in findings.llm_calls] == ["initial", "hard_repair"]
+    assert findings.llm_calls[1].validation_passed is True
+    assert findings.llm_calls[1].lost_fr_paths == []
+    stories = [
+        item
+        for item in backlog.items
+        if item.type is WorkItemType.USER_STORY
+        and any(
+            reference.json_path == "$.requirements.functional_requirements[2]"
+            for reference in item.provenance
+        )
+    ]
+    assert len(stories) == 1
+    assert not any(
+        item.code is FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT for item in findings.items
+    )
+
+
+def test_hard_repair_does_not_keep_an_invalid_restored_story() -> None:
+    payload = library_holds_envelope()
+    initial = _library_proposal()
+    search = next(item for item in initial["items"] if item["local_id"] == "story-search")
+    search["title"] = "Unrelated quarterly billing export"
+    search["title_origin"] = "source"
+    notify = next(item for item in initial["items"] if item["local_id"] == "story-notify")
+    notify["title"] = "Unrelated quarterly billing export"
+    notify["title_origin"] = "source"
+    provider = MockProvider(responses=[initial, _repair_that_moves_notify_onto_a_feature()])
+
     with pytest.raises(DecompositionValidationError) as exc:
         decompose_backlog(CopilotWorkflowResponseV1.model_validate(payload), provider)
+
     assert len(provider.calls) == 2
-    assert "does not cover a required functional requirement" in provider.calls[1][0]
     assert [call.kind for call in exc.value.findings.llm_calls] == ["initial", "hard_repair"]
-    assert exc.value.findings.llm_calls[1].accepted is False
     assert exc.value.findings.llm_calls[1].validation_passed is False
+    assert "$.requirements.functional_requirements[2]" in exc.value.findings.llm_calls[1].lost_fr_paths
+    diagnostic = exc.value.coverage_diagnostic
+    assert diagnostic["uncovered_fr_paths"] == ["$.requirements.functional_requirements[2]"]
+    assert diagnostic["non_story_citations"] == [
+        {"path": "$.requirements.functional_requirements[2]", "item_types": ["feature"]}
+    ]
 
 
 def test_hard_repair_does_not_splice_back_a_dropped_task() -> None:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, Mapping
+
 from backlog_agent.findings.models import GenerationFindings
 
 
@@ -24,8 +26,23 @@ class AIProviderTimeoutError(AIProviderError):
 class DecompositionValidationError(ValueError):
     """LLM proposal remained invalid after schema and deterministic checks."""
 
-    def __init__(self, errors: list[str], findings: GenerationFindings) -> None:
+    def __init__(
+        self,
+        errors: list[str],
+        findings: GenerationFindings,
+        *,
+        coverage_diagnostic: Mapping[str, Any] | None = None,
+    ) -> None:
         detail = "\n".join(f"- {item}" for item in errors) or "- (no details)"
         super().__init__(f"LLM backlog proposal failed validation:\n{detail}")
         self.errors = list(errors)
         self.findings = findings
+        self.coverage_diagnostic = dict(coverage_diagnostic or _empty_coverage_diagnostic())
+
+
+def _empty_coverage_diagnostic() -> dict[str, Any]:
+    return {
+        "uncovered_fr_paths": [],
+        "non_story_citations": [],
+        "lost_fr_paths": [],
+    }

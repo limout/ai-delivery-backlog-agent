@@ -150,7 +150,10 @@ def generate(
             {"loc": "", "msg": str(item)[:180], "type": "decomposition"}
             for item in exc.errors[:8]
         ]
-        _LOG.info("generate rejected decomposition errors=%s", [item["msg"] for item in errors])
+        _LOG.info(
+            "generate rejected decomposition coverage=%s",
+            exc.coverage_diagnostic,
+        )
         return _error(
             422,
             "DECOMPOSITION_FAILED",

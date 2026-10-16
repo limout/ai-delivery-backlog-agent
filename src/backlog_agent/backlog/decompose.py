@@ -195,13 +195,21 @@ def decompose_backlog(
         return _settle_initial(result, calls)
 
     if repair:
-        repair_prompt = _build_repair_prompt(prompt, raw, result.errors)
+        repair_prompt = _build_repair_prompt(
+            prompt, raw, result.errors, _fr_coverage_snapshot(result.proposal)
+        )
         _repaired, second = _invoke_provider(
             provider, repair_prompt, schema, source, calls, "hard_repair"
         )
         if second.ok:
             _note_dropped_grounded_tasks(source, raw, second)
             return _settle_hard_repair(second, calls)
+        recovered = _recover_lost_story_coverage(source, result.proposal, second)
+        if recovered is not None:
+            if calls and calls[-1].kind == "hard_repair":
+                calls[-1] = _diagnostic("hard_repair", recovered)
+            _note_dropped_grounded_tasks(source, raw, recovered)
+            return _settle_hard_repair(recovered, calls)
         _record_lost_fr_paths(calls, result.proposal, second.proposal)
         result = second
 
@@ -214,7 +222,9 @@ def decompose_backlog(
         )
     )
     raise DecompositionValidationError(
-        result.errors, GenerationFindings(items=findings.items, llm_calls=calls)
+        result.errors,
+        GenerationFindings(items=findings.items, llm_calls=calls),
+        coverage_diagnostic=_coverage_failure_diagnostic(result.proposal, findings, calls),
     )
 
 
@@ -1944,6 +1954,51 @@ def _fr_coverage_snapshot(proposal: BacklogProposal | None) -> list[dict[str, st
     return rows
 
 
+def _coverage_failure_diagnostic(
+    proposal: BacklogProposal | None,
+    findings: _FindingSink,
+    calls: list[LlmCallDiagnostic],
+) -> dict[str, Any]:
+    """Paths and item types only. Requirement text and proposal content stay out."""
+
+    uncovered: list[str] = []
+    seen: set[str] = set()
+    for item in findings.items:
+        if item.code is not FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT:
+            continue
+        for reference in item.source_references:
+            path = reference.json_path
+            if (
+                path
+                and path not in seen
+                and _is_requirement_path(path, _FUNCTIONAL_REQUIREMENT_PATH)
+            ):
+                seen.add(path)
+                uncovered.append(path)
+    citations: list[dict[str, Any]] = []
+    for path in uncovered:
+        item_types: list[str] = []
+        if proposal is not None:
+            for proposed in proposal.items:
+                if proposed.type is WorkItemType.USER_STORY:
+                    continue
+                if any(reference.json_path == path for reference in proposed.provenance):
+                    name = proposed.type.value
+                    if name not in item_types:
+                        item_types.append(name)
+        citations.append({"path": path, "item_types": item_types})
+    lost: list[str] = []
+    for event in calls:
+        for path in event.lost_fr_paths:
+            if path not in lost:
+                lost.append(path)
+    return {
+        "uncovered_fr_paths": uncovered,
+        "non_story_citations": citations,
+        "lost_fr_paths": lost,
+    }
+
+
 def _record_lost_fr_paths(
     calls: list[LlmCallDiagnostic],
     initial: BacklogProposal | None,
@@ -2340,6 +2395,95 @@ def _relocate_cross_cutting_constraints(
             continue
         epics[0].provenance.append(reference)
         seen.add(reference.json_path)
+
+
+def _recover_lost_story_coverage(
+    source: NormalizedProjectSource,
+    initial: BacklogProposal | None,
+    repaired: _MaterializeResult,
+) -> _MaterializeResult | None:
+    """Put back user stories whose functional-requirement citations the repair dropped.
+
+    The repaired tree is validated again. A story that still fails validation is not kept,
+    and the initial tree is not merged in its place.
+    """
+
+    if initial is None or repaired.proposal is None:
+        return None
+    lost = {
+        path
+        for path in _covered_fr_paths(initial)
+        if path not in set(_covered_fr_paths(repaired.proposal))
+    }
+    if not lost:
+        return None
+    selected = [
+        item
+        for item in initial.items
+        if item.type is WorkItemType.USER_STORY
+        and (paths := functional_requirement_paths(item))
+        and any(path in lost for path in paths)
+        and all(path in lost for path in paths)
+    ]
+    if not selected:
+        return None
+    raw = repaired.proposal.model_dump(mode="json")
+    items = list(raw.get("items") or [])
+    ids = {str(item.get("local_id") or "") for item in items}
+
+    def fresh_id(base: str) -> str:
+        candidate = f"{base}-coverage"
+        suffix = 2
+        while candidate in ids:
+            candidate = f"{base}-coverage-{suffix}"
+            suffix += 1
+        return candidate
+
+    id_map: dict[str, str] = {}
+    for story in selected:
+        parent_id = story.parent_local_id
+        if not parent_id:
+            continue
+        if parent_id not in ids:
+            parent = next((item for item in initial.items if item.local_id == parent_id), None)
+            if (
+                parent is None
+                or parent.type is not WorkItemType.FEATURE
+                or not parent.parent_local_id
+                or parent.parent_local_id not in ids
+            ):
+                continue
+            items.append(parent.model_dump(mode="json"))
+            ids.add(parent.local_id)
+        dumped = story.model_dump(mode="json")
+        original_id = str(dumped["local_id"])
+        if original_id in ids:
+            dumped["local_id"] = fresh_id(original_id)
+        id_map[original_id] = str(dumped["local_id"])
+        items.append(dumped)
+        ids.add(dumped["local_id"])
+    for item in items:
+        remapped: list[str] = []
+        for dep in item.get("depends_on_local_ids") or []:
+            target = id_map.get(dep, dep)
+            if target in ids and target not in remapped:
+                remapped.append(target)
+        item["depends_on_local_ids"] = remapped
+    raw["items"] = items
+    if not any(
+        item.get("type") == WorkItemType.USER_STORY.value
+        and any(
+            reference.get("json_path") in lost
+            for reference in item.get("provenance") or []
+            if isinstance(reference, dict)
+        )
+        for item in items
+    ):
+        return None
+    recovered = _try_materialize(source, raw)
+    if not recovered.ok or not lost <= set(_covered_fr_paths(recovered.proposal)):
+        return None
+    return recovered
 
 
 def _recover_quality_repair(
@@ -2828,9 +2972,11 @@ def _build_repair_prompt(
     original_prompt: str,
     previous: Mapping[str, Any],
     errors: list[str],
+    coverage_snapshot: list[dict[str, str]] | None = None,
 ) -> str:
     listed = "\n".join(f"- {error}" for error in errors)
     tasks = json.dumps(_repair_task_snapshot(previous), ensure_ascii=False, indent=2)
+    snapshot = json.dumps(coverage_snapshot or [], ensure_ascii=False, indent=2)
     return (
         f"{original_prompt}\n\n"
         "The previous JSON failed deterministic validation. Return a corrected JSON object "
@@ -2875,6 +3021,11 @@ def _build_repair_prompt(
         "- Keep exactly one clarification task per unresolved question, under the story whose "
         "outcome it constrains, citing every source entry that raises it. Do not leave a feature "
         "that collects unrelated story outcomes.\n"
+        "- Each previously covered functional requirement listed below must remain on a user_story "
+        "whose provenance json_path and excerpt equal that entry. Citing the path only on an epic, "
+        "feature, or task does not preserve coverage. Move the path to another user_story when "
+        "splitting work; do not drop it.\n"
+        f"Previously covered functional requirements:\n{snapshot}\n\n"
         f"Validation errors:\n{listed}\n\n"
         f"Previous tasks to preserve or replace when they are evidence-supported:\n{tasks}\n\n"
         "Previous JSON:\n"
