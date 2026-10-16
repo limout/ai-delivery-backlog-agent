@@ -204,6 +204,14 @@ def decompose_backlog(
         if second.ok:
             _note_dropped_grounded_tasks(source, raw, second)
             return _settle_hard_repair(second, calls)
+        structured = _recover_execution_structure(source, second)
+        if structured is not None and structured.ok:
+            if calls and calls[-1].kind == "hard_repair":
+                calls[-1] = _diagnostic("hard_repair", structured)
+            _note_dropped_grounded_tasks(source, raw, structured)
+            return _settle_hard_repair(structured, calls)
+        if structured is not None:
+            second = structured
         recovered = _recover_lost_story_coverage(source, result.proposal, second)
         if recovered is not None:
             if calls and calls[-1].kind == "hard_repair":
@@ -2397,6 +2405,168 @@ def _relocate_cross_cutting_constraints(
         seen.add(reference.json_path)
 
 
+def _recover_execution_structure(
+    source: NormalizedProjectSource,
+    repaired: _MaterializeResult,
+) -> _MaterializeResult | None:
+    """Split combined requirement stories and retitle workstream features, then validate again."""
+
+    if repaired.proposal is None or not _execution_structure_errors(repaired.errors):
+        return None
+    proposal = repaired.proposal.model_copy(deep=True)
+    _separate_combined_functional_stories(proposal)
+    _retitle_workstream_features(source, proposal)
+    recovered = _try_materialize(source, proposal.model_dump(mode="json"))
+    if _execution_structure_errors(recovered.errors):
+        return None
+    return recovered
+
+
+def _execution_structure_errors(errors: list[str]) -> bool:
+    return any(
+        "delivery workstreams must not be copied as features" in error
+        or "must not combine independently testable" in error
+        for error in errors
+    )
+
+
+def _separate_combined_functional_stories(proposal: BacklogProposal) -> None:
+    extras: list[ProposedItem] = []
+    used = {item.local_id for item in proposal.items}
+    for item in list(proposal.items):
+        if item.type is not WorkItemType.USER_STORY:
+            continue
+        fr_refs: list[ProposedProvenance] = []
+        seen: set[str] = set()
+        for reference in item.provenance:
+            if (
+                _is_requirement_path(reference.json_path, _FUNCTIONAL_REQUIREMENT_PATH)
+                and reference.json_path not in seen
+            ):
+                seen.add(reference.json_path)
+                fr_refs.append(reference)
+        if len(fr_refs) < 2:
+            continue
+        kept = fr_refs[0].json_path
+        for offset, reference in enumerate(fr_refs[1:], start=2):
+            clone = item.model_copy(deep=True)
+            clone.local_id = _fresh_local_id(used, f"{item.local_id}-fr{offset}")
+            clone.provenance = [reference.model_copy(deep=True)]
+            clone.depends_on_local_ids = []
+            clone.acceptance_criteria = []
+            clone.acceptance_criteria_origins = []
+            clone.test_requirements = []
+            clone.test_requirements_origins = []
+            clone.uncertainties = []
+            if reference.excerpt and reference.excerpt.strip():
+                clone.title = reference.excerpt.strip()
+                clone.title_origin = ContentOrigin.SOURCE
+            else:
+                clone.title_origin = ContentOrigin.GENERATED
+            _align_story_identity(clone)
+            extras.append(clone)
+        item.provenance = [
+            reference
+            for reference in item.provenance
+            if not _is_requirement_path(reference.json_path, _FUNCTIONAL_REQUIREMENT_PATH)
+            or reference.json_path == kept
+        ]
+        _align_story_identity(item)
+    proposal.items.extend(extras)
+
+
+def _align_story_identity(item: ProposedItem) -> None:
+    excerpts = [reference.excerpt for reference in item.provenance if reference.excerpt]
+    if item.title_origin is ContentOrigin.SOURCE and not _title_is_exact_source_copy(
+        item.title, excerpts
+    ):
+        excerpt = next(
+            (
+                reference.excerpt.strip()
+                for reference in item.provenance
+                if reference.excerpt
+                and reference.excerpt.strip()
+                and _is_requirement_path(reference.json_path, _FUNCTIONAL_REQUIREMENT_PATH)
+            ),
+            "",
+        )
+        if excerpt:
+            item.title = excerpt
+        else:
+            item.title_origin = ContentOrigin.GENERATED
+    if not item.description.strip() or _is_title_restatement(item.title, item.description):
+        item.description = "The user can complete this outcome and observe the result."
+        item.description_origin = ContentOrigin.GENERATED
+
+
+def _fresh_local_id(used: set[str], base: str) -> str:
+    candidate = base
+    suffix = 2
+    while candidate in used:
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    used.add(candidate)
+    return candidate
+
+
+def _retitle_workstream_features(
+    source: NormalizedProjectSource, proposal: BacklogProposal
+) -> None:
+    workstreams = fact_texts(source.workstreams)
+    features = [item for item in proposal.items if item.type is WorkItemType.FEATURE]
+    remove: set[str] = set()
+    for item in features:
+        if normalize_source_text(item.title) not in workstreams:
+            continue
+        capability = next(
+            (
+                reference.excerpt.strip()
+                for reference in item.provenance
+                if reference.excerpt
+                and reference.excerpt.strip()
+                and normalize_source_text(reference.excerpt) not in workstreams
+                and reference.json_path.startswith("$.solution.key_capabilities")
+            ),
+            "",
+        )
+        if capability:
+            item.title = capability
+            item.title_origin = ContentOrigin.SOURCE
+            continue
+        siblings = [
+            other
+            for other in features
+            if other.parent_local_id == item.parent_local_id
+            and other.local_id != item.local_id
+            and normalize_source_text(other.title) not in workstreams
+        ]
+        children = [child for child in proposal.items if child.parent_local_id == item.local_id]
+        if len(siblings) == 1 and children:
+            for child in children:
+                child.parent_local_id = siblings[0].local_id
+            remove.add(item.local_id)
+            continue
+        story = next(
+            (
+                child
+                for child in children
+                if child.type is WorkItemType.USER_STORY
+                and normalize_source_text(child.title) not in workstreams
+            ),
+            None,
+        )
+        if story is None:
+            continue
+        item.title = story.title
+        item.title_origin = ContentOrigin.GENERATED
+    if remove:
+        proposal.items = [item for item in proposal.items if item.local_id not in remove]
+        for item in proposal.items:
+            item.depends_on_local_ids = [
+                dep for dep in item.depends_on_local_ids if dep not in remove
+            ]
+
+
 def _recover_lost_story_coverage(
     source: NormalizedProjectSource,
     initial: BacklogProposal | None,
@@ -3021,6 +3191,12 @@ def _build_repair_prompt(
         "- Keep exactly one clarification task per unresolved question, under the story whose "
         "outcome it constrains, citing every source entry that raises it. Do not leave a feature "
         "that collects unrelated story outcomes.\n"
+        "- When a feature title equals a delivery workstream, do not keep that title. Retitle the "
+        "feature to a source capability its stories implement, or move those stories under that "
+        "capability feature and remove the workstream feature. Do not delete the stories.\n"
+        "- When a user story cites more than one functional-requirement path, split it into one "
+        "user_story per path. Each story keeps exactly one of those paths and its excerpt. Do not "
+        "leave any of those paths only on an epic, feature, or task.\n"
         "- Each previously covered functional requirement listed below must remain on a user_story "
         "whose provenance json_path and excerpt equal that entry. Citing the path only on an epic, "
         "feature, or task does not preserve coverage. Move the path to another user_story when "

@@ -691,6 +691,93 @@ def _repair_that_moves_notify_onto_a_feature() -> dict:
     return repaired
 
 
+def _repair_with_workstream_feature_and_combined_story() -> dict:
+    payload = library_holds_envelope()
+    proposal = _library_proposal(cover_notify=False)
+    fr = payload["requirements"]["functional_requirements"]
+    hold = next(item for item in proposal["items"] if item["local_id"] == "story-hold")
+    hold["provenance"].append(
+        _src("$.requirements.functional_requirements[2]", "functional_requirements", fr[2])
+    )
+    hold["parent_local_id"] = "feat-stream"
+    proposal["items"].append(
+        _item(
+            "feat-stream",
+            "feature",
+            "Member experience",
+            parent="epic-1",
+            provenance=[
+                _src(
+                    "$.delivery_plan.workstreams[0]",
+                    "workstreams",
+                    payload["delivery_plan"]["workstreams"][0],
+                )
+            ],
+            title_origin="source",
+        )
+    )
+    return proposal
+
+
+def test_hard_repair_corrects_workstream_feature_and_combined_requirements() -> None:
+    payload = library_holds_envelope()
+    initial = _library_proposal()
+    search = next(item for item in initial["items"] if item["local_id"] == "story-search")
+    search["title"] = "Unrelated quarterly billing export"
+    search["title_origin"] = "source"
+    provider = MockProvider(responses=[initial, _repair_with_workstream_feature_and_combined_story()])
+
+    backlog, findings = decompose_backlog(
+        CopilotWorkflowResponseV1.model_validate(payload), provider
+    )
+
+    assert len(provider.calls) == 2
+    prompt = provider.calls[1][0]
+    assert "When a feature title equals a delivery workstream" in prompt
+    assert "one user_story per path" in prompt
+    assert findings.llm_calls[1].validation_passed is True
+    assert not any(
+        item.type is WorkItemType.FEATURE and item.title == "Member experience" for item in backlog.items
+    )
+    stories = [item for item in backlog.items if item.type is WorkItemType.USER_STORY]
+    covered: dict[str, int] = {}
+    for story in stories:
+        paths = [
+            reference.json_path
+            for reference in story.provenance
+            if reference.json_path.startswith("$.requirements.functional_requirements")
+        ]
+        assert len(paths) == 1
+        covered[paths[0]] = covered.get(paths[0], 0) + 1
+    assert set(covered) == {f"$.requirements.functional_requirements[{index}]" for index in range(3)}
+    assert not any(item.code is FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT for item in findings.items)
+
+
+def test_execution_structure_repair_does_not_bypass_other_validation() -> None:
+    payload = library_holds_envelope()
+    initial = _library_proposal()
+    search = next(item for item in initial["items"] if item["local_id"] == "story-search")
+    search["title"] = "Unrelated quarterly billing export"
+    search["title_origin"] = "source"
+    repaired = _repair_with_workstream_feature_and_combined_story()
+    repaired["items"] = [
+        item
+        for item in repaired["items"]
+        if item["local_id"] not in {"story-search", "feat-search"}
+    ]
+    provider = MockProvider(responses=[initial, repaired])
+
+    with pytest.raises(DecompositionValidationError) as exc:
+        decompose_backlog(CopilotWorkflowResponseV1.model_validate(payload), provider)
+
+    assert len(provider.calls) == 2
+    assert any("Uncovered functional requirement" in error for error in exc.value.errors)
+    assert not any("must not combine independently testable" in error for error in exc.value.errors)
+    assert not any("workstreams must not be copied as features" in error for error in exc.value.errors)
+    assert exc.value.findings.llm_calls[1].validation_passed is False
+    assert exc.value.findings.llm_calls[1].accepted is False
+
+
 def test_hard_repair_restores_user_story_coverage_moved_onto_a_feature() -> None:
     payload = library_holds_envelope()
     initial = _library_proposal()
