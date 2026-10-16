@@ -9,6 +9,7 @@ from backlog_agent.backlog.decompose import (
     _public_validation_errors,
     decompose_backlog,
 )
+from backlog_agent.backlog.models import WorkItemType
 from backlog_agent.llm.exceptions import DecompositionValidationError
 from backlog_agent.contracts.copilot_workflow_response_v1 import CopilotWorkflowResponseV1
 from backlog_agent.findings.models import Finding, FindingCode, FindingSeverity
@@ -148,10 +149,10 @@ def test_hard_repair_is_not_followed_by_quality_repair() -> None:
     _backlog, _findings = decompose_backlog(_insurance_envelope(), provider)
 
     assert len(provider.calls) == 2
-    assert "failed deterministic validation" in provider.calls[1][0]
-    assert "actionable quality findings" not in provider.calls[1][0]
-    assert [call.kind for call in _findings.llm_calls] == ["initial", "hard_repair"]
-    assert _findings.llm_calls[0].validation_passed is False
+    assert "failed deterministic validation" not in provider.calls[1][0]
+    assert "actionable quality findings" in provider.calls[1][0]
+    assert [call.kind for call in _findings.llm_calls] == ["initial", "quality_repair"]
+    assert _findings.llm_calls[0].validation_passed is True
     assert _findings.llm_calls[0].accepted is False
     assert _findings.llm_calls[1].validation_passed is True
     assert _findings.llm_calls[1].accepted is True
@@ -521,11 +522,14 @@ def test_quality_repair_dropping_covered_fr_keeps_initial_tree() -> None:
     assert findings.llm_calls[0].accepted is True
     assert findings.llm_calls[1].kind == "quality_repair"
     assert findings.llm_calls[1].accepted is False
-    assert findings.llm_calls[1].validation_passed is False
+    assert findings.llm_calls[1].validation_passed is True
     assert findings.llm_calls[1].usable_proposal is True
     assert "$.requirements.functional_requirements[1]" in findings.llm_calls[1].lost_fr_paths
     assert any(
-        "Uncovered functional requirement" in error for error in findings.llm_calls[1].validation_errors
+        reference.json_path == "$.requirements.functional_requirements[1]"
+        for item in backlog.items
+        if item.type is WorkItemType.USER_STORY
+        for reference in item.provenance
     )
     assert all(
         "Normalized project facts" not in error for error in findings.llm_calls[1].validation_errors

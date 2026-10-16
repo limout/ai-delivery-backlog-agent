@@ -343,14 +343,16 @@ def test_timeline_constraint_is_not_a_work_item() -> None:
     assert any("timeline or estimate" in error for error in exc.value.errors)
 
 
-def test_warehouse_project_rejects_uncovered_requirement() -> None:
+def test_warehouse_project_returns_draft_for_uncovered_requirement() -> None:
     envelope = CopilotWorkflowResponseV1.model_validate(warehouse_picking_envelope())
-    with pytest.raises(DecompositionValidationError) as exc:
-        decompose_backlog(envelope, MockProvider(_warehouse_proposal(omit_reprint=True)), repair=False)
-    assert any("Uncovered functional requirement" in error for error in exc.value.errors)
-    assert any(
-        item.code is FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT for item in exc.value.findings.items
+    backlog, findings = decompose_backlog(
+        envelope, MockProvider(_warehouse_proposal(omit_reprint=True)), repair=False
     )
+    assert any(item.type is WorkItemType.USER_STORY for item in backlog.items)
+    assert any(
+        item.code is FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT for item in findings.items
+    )
+    assert findings.llm_calls[0].accepted is False
 
 
 def test_warehouse_atomic_and_multi_task_stories_with_generated_provenance() -> None:
@@ -767,15 +769,20 @@ def test_execution_structure_repair_does_not_bypass_other_validation() -> None:
     ]
     provider = MockProvider(responses=[initial, repaired])
 
-    with pytest.raises(DecompositionValidationError) as exc:
-        decompose_backlog(CopilotWorkflowResponseV1.model_validate(payload), provider)
+    backlog, findings = decompose_backlog(CopilotWorkflowResponseV1.model_validate(payload), provider)
 
     assert len(provider.calls) == 2
-    assert any("Uncovered functional requirement" in error for error in exc.value.errors)
-    assert not any("must not combine independently testable" in error for error in exc.value.errors)
-    assert not any("workstreams must not be copied as features" in error for error in exc.value.errors)
-    assert exc.value.findings.llm_calls[1].validation_passed is False
-    assert exc.value.findings.llm_calls[1].accepted is False
+    assert any(item.type is WorkItemType.USER_STORY for item in backlog.items)
+    assert any(
+        item.code is FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT for item in findings.items
+    )
+    assert not any(
+        item.code is FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT
+        and "must not combine" in item.message
+        for item in findings.items
+    )
+    assert findings.llm_calls[1].validation_passed is True
+    assert findings.llm_calls[1].accepted is False
 
 
 def test_hard_repair_restores_user_story_coverage_moved_onto_a_feature() -> None:
@@ -824,18 +831,25 @@ def test_hard_repair_does_not_keep_an_invalid_restored_story() -> None:
     notify["title_origin"] = "source"
     provider = MockProvider(responses=[initial, _repair_that_moves_notify_onto_a_feature()])
 
-    with pytest.raises(DecompositionValidationError) as exc:
-        decompose_backlog(CopilotWorkflowResponseV1.model_validate(payload), provider)
+    backlog, findings = decompose_backlog(CopilotWorkflowResponseV1.model_validate(payload), provider)
 
     assert len(provider.calls) == 2
-    assert [call.kind for call in exc.value.findings.llm_calls] == ["initial", "hard_repair"]
-    assert exc.value.findings.llm_calls[1].validation_passed is False
-    assert "$.requirements.functional_requirements[2]" in exc.value.findings.llm_calls[1].lost_fr_paths
-    diagnostic = exc.value.coverage_diagnostic
-    assert diagnostic["uncovered_fr_paths"] == ["$.requirements.functional_requirements[2]"]
-    assert diagnostic["non_story_citations"] == [
-        {"path": "$.requirements.functional_requirements[2]", "item_types": ["feature"]}
-    ]
+    assert [call.kind for call in findings.llm_calls] == ["initial", "hard_repair"]
+    assert findings.llm_calls[1].validation_passed is True
+    assert findings.llm_calls[1].accepted is False
+    assert not any(
+        item.type is WorkItemType.USER_STORY
+        and any(
+            reference.json_path == "$.requirements.functional_requirements[2]"
+            for reference in item.provenance
+        )
+        for item in backlog.items
+    )
+    assert any(
+        item.code is FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT
+        and item.source_references[0].json_path == "$.requirements.functional_requirements[2]"
+        for item in findings.items
+    )
 
 
 def test_hard_repair_does_not_splice_back_a_dropped_task() -> None:

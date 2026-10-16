@@ -101,15 +101,16 @@ def test_narrative_excerpt_does_not_cover_a_structured_requirement() -> None:
             title_origin="generated",
         )
     )
-    with pytest.raises(DecompositionValidationError) as exc:
-        decompose_backlog(
-            CopilotWorkflowResponseV1.model_validate(payload),
-            MockProvider(proposal),
-            repair=False,
-        )
-    assert any("notify the member" in error or "functional" in error.lower() for error in exc.value.errors)
+    _backlog, findings = decompose_backlog(
+        CopilotWorkflowResponseV1.model_validate(payload),
+        MockProvider(proposal),
+        repair=False,
+    )
     assert any(
-        item.code is FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT for item in exc.value.findings.items
+        item.code is FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT
+        and item.source_references
+        and "notify" in (item.source_references[0].excerpt or "").lower()
+        for item in findings.items
     )
 
 

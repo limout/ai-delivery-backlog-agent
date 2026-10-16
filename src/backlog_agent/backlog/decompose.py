@@ -99,6 +99,7 @@ _QUALITY_REPAIR_CODES = frozenset(
         FindingCode.OVERLAPPING_STORY_RESPONSIBILITY,
         FindingCode.DUPLICATE_ACCEPTANCE_CRITERION,
         FindingCode.UNCOVERED_NON_FUNCTIONAL_REQUIREMENT,
+        FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT,
         FindingCode.FEATURE_CHILD_MISALIGNMENT,
     }
 )
@@ -202,11 +203,21 @@ def decompose_backlog(
             provider, repair_prompt, schema, source, calls, "hard_repair"
         )
         if second.ok:
+            recovered = _recover_lost_story_coverage(source, result.proposal, second)
+            if recovered is not None:
+                if calls and calls[-1].kind == "hard_repair":
+                    calls[-1] = _diagnostic("hard_repair", recovered)
+                second = recovered
             _note_dropped_grounded_tasks(source, raw, second)
             return _settle_hard_repair(second, calls)
         structured = _recover_execution_structure(source, second)
         if structured is not None and structured.ok:
-            if calls and calls[-1].kind == "hard_repair":
+            recovered = _recover_lost_story_coverage(source, result.proposal, structured)
+            if recovered is not None:
+                if calls and calls[-1].kind == "hard_repair":
+                    calls[-1] = _diagnostic("hard_repair", recovered)
+                structured = recovered
+            elif calls and calls[-1].kind == "hard_repair":
                 calls[-1] = _diagnostic("hard_repair", structured)
             _note_dropped_grounded_tasks(source, raw, structured)
             return _settle_hard_repair(structured, calls)
@@ -275,6 +286,7 @@ def _try_materialize(source: NormalizedProjectSource, raw: Mapping[str, Any]) ->
             parsed=False,
         )
 
+    _bind_exact_functional_citations(source, proposal)
     errors.extend(_structural_errors(proposal))
     errors.extend(_provenance_and_scope_errors(source, proposal, findings))
     errors.extend(_execution_quality_errors(source, proposal))
@@ -295,6 +307,7 @@ def _try_materialize(source: NormalizedProjectSource, raw: Mapping[str, Any]) ->
                 if extra:
                     drop = {item.local_id for item in injected}
                     proposal.items = [item for item in proposal.items if item.local_id not in drop]
+        _note_uncovered_functional_requirements(source, proposal)
     if errors:
         return _MaterializeResult(ok=False, errors=errors, findings=findings, proposal=proposal)
 
@@ -305,19 +318,6 @@ def _try_materialize(source: NormalizedProjectSource, raw: Mapping[str, Any]) ->
         return _MaterializeResult(ok=False, errors=errors, findings=findings, proposal=proposal)
 
     _record_uncovered_functional_requirements(source, backlog.items, findings)
-    uncovered = [
-        item for item in findings.items if item.code is FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT
-    ]
-    if uncovered:
-        for item in uncovered:
-            excerpts = [ref.excerpt for ref in item.source_references if ref.excerpt]
-            errors.append(
-                "Uncovered functional requirement: " + (excerpts[0] if excerpts else item.message)
-            )
-        return _MaterializeResult(
-            ok=False, errors=errors, findings=findings, proposal=proposal, backlog=backlog
-        )
-
     _record_generated_content(source, proposal, backlog, findings)
     _record_uncertainties(proposal, backlog, findings)
     _record_prerequisites(source, proposal, findings)
@@ -1441,6 +1441,88 @@ def _record_prerequisites(
         )
 
 
+def _statement_key(text: str) -> str:
+    """Identity of a full statement, ignoring only case, whitespace, and edge punctuation."""
+
+    return normalize_source_text(text).strip(".,;:!?\"'`")
+
+
+def _bind_exact_functional_citations(
+    source: NormalizedProjectSource, proposal: BacklogProposal
+) -> None:
+    """Attach a functional-requirement path when one story already states that full text.
+
+    A shorter clause is not the statement. A story that already cites a different
+    functional requirement is left unchanged so two requirements are not combined.
+    """
+
+    facts = [
+        fact
+        for fact in source.functional_requirements
+        if fact.text.strip() and classify_scope(source, fact.text) not in {"out", "conflict"}
+    ]
+    unique: dict[str, Any] = {}
+    duplicate_keys: set[str] = set()
+    for fact in facts:
+        key = _statement_key(fact.text)
+        if len(key) < 12:
+            continue
+        if key in unique or key in duplicate_keys:
+            duplicate_keys.add(key)
+            unique.pop(key, None)
+            continue
+        unique[key] = fact
+
+    for item in proposal.items:
+        if item.type is not WorkItemType.USER_STORY:
+            continue
+        for reference in item.provenance:
+            if not _is_requirement_path(reference.json_path, _FUNCTIONAL_REQUIREMENT_PATH):
+                continue
+            fact = next((candidate for candidate in facts if candidate.json_path == reference.json_path), None)
+            if fact is None or not reference.excerpt:
+                continue
+            if reference.excerpt != fact.text and _statement_key(reference.excerpt) == _statement_key(fact.text):
+                reference.excerpt = fact.text
+
+    covered = {
+        fact.json_path
+        for fact in facts
+        if _provenance_covers_fact(proposal.items, fact, types={WorkItemType.USER_STORY})
+    }
+
+    def states(item: ProposedItem, key: str) -> bool:
+        texts = [item.title, item.description, *item.acceptance_criteria]
+        texts.extend(reference.excerpt or "" for reference in item.provenance)
+        return any(text.strip() and _statement_key(text) == key for text in texts)
+
+    for key, fact in unique.items():
+        if fact.json_path in covered:
+            continue
+        matches = [
+            item
+            for item in proposal.items
+            if item.type is WorkItemType.USER_STORY
+            and states(item, key)
+            and all(
+                path == fact.json_path
+                for path in functional_requirement_paths(item)
+            )
+        ]
+        if len(matches) != 1:
+            continue
+        story = matches[0]
+        if any(reference.json_path == fact.json_path for reference in story.provenance):
+            continue
+        story.provenance.append(
+            ProposedProvenance(
+                json_path=fact.json_path,
+                field_name=fact.field_name,
+                excerpt=fact.text,
+            )
+        )
+
+
 def _provenance_covers_fact(
     items: list[Any],
     fact,
@@ -1454,6 +1536,71 @@ def _provenance_covers_fact(
             if reference.json_path == fact.json_path and reference.excerpt == fact.text:
                 return True
     return False
+
+
+def _note_uncovered_functional_requirements(
+    source: NormalizedProjectSource, proposal: BacklogProposal
+) -> None:
+    """Make each uncovered requirement visible without treating that note as coverage.
+
+    A clarification task cites the requirement so a reviewer can act on the gap.
+    Only a user story citation covers the requirement, so the task does not.
+    When no user story can own the task, the same gap is an unresolved prerequisite.
+    """
+
+    stories = [item for item in proposal.items if item.type is WorkItemType.USER_STORY]
+    missing = [
+        fact
+        for fact in source.functional_requirements
+        if classify_scope(source, fact.text) not in {"out", "conflict"}
+        and not _provenance_covers_fact(proposal.items, fact, types={WorkItemType.USER_STORY})
+    ]
+    if not missing:
+        return
+    if not stories:
+        for fact in missing:
+            _record_project_level_question(proposal, [fact], _uncovered_gap_text(fact.text))
+        return
+    parent = stories[0]
+    used = {item.local_id for item in proposal.items}
+    for index, fact in enumerate(missing, start=1):
+        title = f"Clarify uncovered requirement: {fact.text.strip()}"
+        if len(title) > 180:
+            title = title[:177].rstrip() + "..."
+        local_id = _fresh_local_id(used, f"task-uncovered-{index}")
+        item = ProposedItem(
+            local_id=local_id,
+            type=WorkItemType.TASK,
+            title=title,
+            description=(
+                "This clarification records a functional requirement that no user story cites. "
+                "Completing it does not implement or satisfy that requirement."
+            ),
+            parent_local_id=parent.local_id,
+            provenance=[
+                ProposedProvenance(
+                    json_path=fact.json_path,
+                    field_name=fact.field_name,
+                    excerpt=fact.text,
+                )
+            ],
+            title_origin=ContentOrigin.GENERATED,
+            description_origin=ContentOrigin.GENERATED,
+        )
+        baseline = set(_execution_quality_errors(source, proposal))
+        proposal.items.append(item)
+        introduced = set(_execution_quality_errors(source, proposal)) - baseline
+        if introduced or _task_confirms_established_fact(source, item):
+            proposal.items.remove(item)
+            _record_project_level_question(proposal, [fact], _uncovered_gap_text(fact.text))
+
+
+def _uncovered_gap_text(text: str) -> str:
+    detail = " ".join(text.split())
+    return (
+        "Assumption: no user story cites this functional requirement yet, so it is not "
+        f"implemented by the draft: {detail}"
+    )
 
 
 def _record_uncovered_functional_requirements(
@@ -2826,6 +2973,7 @@ def _settle_quality_repair(
         _mark_accepted(calls, "quality_repair")
         return _accepted(repaired, calls)
     if before == 0:
+        _record_lost_fr_paths(calls, initial.proposal, repaired.proposal)
         initial.findings.add(
             Finding(
                 severity=FindingSeverity.WARNING,

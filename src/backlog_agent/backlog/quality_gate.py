@@ -4,10 +4,12 @@ Three separate questions are answered for every candidate tree, and they must
 not be conflated:
 
 ``validation_passed``
-    The proposal parsed, satisfied the structural rules (parents, cycles,
-    provenance, hard coverage of functional requirements) and materialized into
-    a ``CanonicalBacklogV1``. This is a *hard* gate. A failing candidate is
-    never returned.
+    The proposal parsed, satisfied the structural rules (parents, cycles, and
+    provenance) and materialized into a ``CanonicalBacklogV1``. This is a
+    *hard* gate. A candidate that cannot be materialized is never returned.
+    A missing functional-requirement citation does not by itself fail this
+    gate: the canonical draft is kept and the omission stays a blocking
+    quality defect.
 
 ``blocking quality defects``
     Soft findings that nevertheless mean required work is demonstrably missing
@@ -20,8 +22,8 @@ not be conflated:
       source requirement it cites (``MISSING_VERIFICATION_COVERAGE`` with the
       "does not verify every outcome" message);
     * an uncovered functional requirement (``UNCOVERED_FUNCTIONAL_REQUIREMENT``).
-      Hard validation already rejects this, it is listed so the contract holds
-      if that rule is ever relaxed;
+      The draft is still returned. ``accepted`` stays false, and a clarification
+      task or unresolved prerequisite names the gap without counting as coverage;
     * a source acceptance criterion copied onto stories that do not share one
       outcome (``DUPLICATE_ACCEPTANCE_CRITERION``);
     * a story whose description or acceptance criteria still claim an outcome

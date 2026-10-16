@@ -131,19 +131,19 @@ def test_decompose_rejects_dependency_cycle() -> None:
     assert any("dependency cycle" in error for error in exc.value.errors)
 
 
-def test_decompose_rejects_uncovered_requirement() -> None:
+def test_decompose_returns_draft_when_a_requirement_is_uncovered() -> None:
     proposal = representative_complete_proposal()
     proposal["items"] = [item for item in proposal["items"] if item["local_id"] != "story-premium"]
-    # remove child task parent pointing at missing story is fine; premium had no children
     provider = MockProvider(proposal)
 
-    with pytest.raises(DecompositionValidationError) as exc:
-        decompose_backlog(_envelope(), provider, repair=False)
+    backlog, findings = decompose_backlog(_envelope(), provider, repair=False)
 
-    assert any("Uncovered functional requirement" in error for error in exc.value.errors)
+    assert any(item.type is WorkItemType.USER_STORY for item in backlog.items)
     assert any(
-        item.code is FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT for item in exc.value.findings.items
+        item.code is FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT for item in findings.items
     )
+    assert findings.llm_calls[0].validation_passed is True
+    assert findings.llm_calls[0].accepted is False
 
 
 def test_decompose_repairs_once_then_succeeds() -> None:
@@ -155,21 +155,23 @@ def test_decompose_repairs_once_then_succeeds() -> None:
     backlog, _findings = decompose_backlog(_envelope(), provider)
 
     assert len(provider.calls) == 2
-    assert "failed deterministic validation" in provider.calls[1][0]
+    assert "actionable quality findings" in provider.calls[1][0]
     assert any(item.type is WorkItemType.USER_STORY and "premium" in item.title.lower() for item in backlog.items)
 
 
-def test_decompose_repairs_once_then_raises_actionable_errors() -> None:
+def test_decompose_repairs_once_then_keeps_the_draft_when_the_gap_remains() -> None:
     bad = representative_complete_proposal()
     bad["items"] = [item for item in bad["items"] if item["local_id"] != "story-premium"]
     provider = MockProvider(responses=[bad, copy.deepcopy(bad)])
 
-    with pytest.raises(DecompositionValidationError) as exc:
-        decompose_backlog(_envelope(), provider)
+    backlog, findings = decompose_backlog(_envelope(), provider)
 
     assert len(provider.calls) == 2
-    assert any(item.code is FindingCode.LLM_VALIDATION_FAILED for item in exc.value.findings.items)
-    assert exc.value.errors
+    assert any(item.type is WorkItemType.USER_STORY for item in backlog.items)
+    assert any(
+        item.code is FindingCode.UNCOVERED_FUNCTIONAL_REQUIREMENT for item in findings.items
+    )
+    assert findings.llm_calls[0].accepted is False
 
 
 def test_decompose_does_not_call_network_on_provider_error() -> None:

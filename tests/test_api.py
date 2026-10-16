@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import copy
 import json
 from pathlib import Path
@@ -120,37 +119,6 @@ def test_generate_rejects_invalid_envelope(client: TestClient) -> None:
 
 _PREMIUM_PATH = "$.requirements.functional_requirements[2]"
 _PREMIUM_TEXT = "The system shall display current premium and coverage before confirmation."
-_PREMIUM_DESCRIPTION = (
-    "Before the customer confirms, the portal shows the proposed premium and "
-    "coverage so they can abort if the terms are unacceptable."
-)
-
-
-def _coverage_log(caplog: pytest.LogCaptureFixture) -> dict:
-    messages = [
-        record.getMessage()
-        for record in caplog.records
-        if record.name == "backlog_agent.api"
-        and record.getMessage().startswith("generate rejected decomposition coverage=")
-    ]
-    assert messages == [messages[0]]
-    return ast.literal_eval(messages[0].split("coverage=", 1)[1])
-
-
-def _assert_coverage_log_omits_sensitive_content(message_text: str) -> None:
-    forbidden = (
-        _PREMIUM_TEXT,
-        _PREMIUM_DESCRIPTION,
-        "Customer self-service policy renewal portal",
-        "Build a customer self-service portal for insurance policy renewals.",
-        _TOKEN,
-        "Authorization",
-        "Bearer",
-        "BACKLOG_API_TOKEN",
-        "normalized project facts",
-    )
-    for secret in forbidden:
-        assert secret not in message_text
 
 
 def _proposal_without_items(local_ids: set[str]) -> dict:
@@ -172,11 +140,11 @@ def _premium_cited_only_by_feature() -> dict:
     return proposal
 
 
-def _post_rejected_proposal(
+def _post_proposal(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     proposals: list[dict],
-) -> tuple[object, dict, str]:
+):
     monkeypatch.setenv("BACKLOG_API_TOKEN", _TOKEN)
     monkeypatch.setattr(
         "backlog_agent.api.get_provider",
@@ -184,48 +152,69 @@ def _post_rejected_proposal(
     )
     with caplog.at_level("INFO", logger="backlog_agent.api"):
         response = TestClient(app).post("/generate", json=_envelope(), headers=_auth())
-    text = "\n".join(
+    logged = "\n".join(
         record.getMessage()
         for record in caplog.records
         if record.name == "backlog_agent.api"
     )
-    return response, _coverage_log(caplog), text
+    return response, logged
 
 
-def test_decomposition_failure_log_marks_missing_story_citation(
+def _user_story_paths(body: dict) -> set[str]:
+    return {
+        reference["json_path"]
+        for item in body["backlog"]["items"]
+        if item["type"] == "user_story"
+        for reference in item["provenance"]
+    }
+
+
+def test_missing_story_citation_returns_a_draft_with_the_gap(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     missing = _proposal_without_items({"story-premium"})
-    response, diagnostic, logged = _post_rejected_proposal(monkeypatch, caplog, [missing, missing])
+    response, logged = _post_proposal(monkeypatch, caplog, [missing, missing])
 
-    assert response.status_code == 422
-    assert response.json()["error"] == "DECOMPOSITION_FAILED"
-    assert diagnostic == {
-        "uncovered_fr_paths": [_PREMIUM_PATH],
-        "non_story_citations": [{"path": _PREMIUM_PATH, "item_types": []}],
-        "lost_fr_paths": [],
-    }
-    _assert_coverage_log_omits_sensitive_content(logged)
+    assert response.status_code == 200
+    body = response.json()
+    assert "backlog" in body and "findings" in body
+    assert _PREMIUM_PATH not in _user_story_paths(body)
+    assert any(
+        item["code"] == "UNCOVERED_FUNCTIONAL_REQUIREMENT"
+        and item["source_references"][0]["json_path"] == _PREMIUM_PATH
+        for item in body["findings"]["items"]
+    )
+    assert body["findings"]["llm_calls"][0]["validation_passed"] is True
+    assert body["findings"]["llm_calls"][0]["accepted"] is False
+    assert "generate rejected decomposition" not in logged
+    assert _TOKEN not in logged
+    assert "Authorization" not in logged
 
 
-def test_decomposition_failure_log_marks_non_story_citation(
+def test_feature_only_citation_does_not_count_as_story_coverage(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     cited_on_feature = _premium_cited_only_by_feature()
-    response, diagnostic, logged = _post_rejected_proposal(
-        monkeypatch,
-        caplog,
-        [cited_on_feature, cited_on_feature],
-    )
+    response, logged = _post_proposal(monkeypatch, caplog, [cited_on_feature, cited_on_feature])
 
-    assert response.status_code == 422
-    assert response.json()["error"] == "DECOMPOSITION_FAILED"
-    assert diagnostic["uncovered_fr_paths"] == [_PREMIUM_PATH]
-    assert diagnostic["non_story_citations"] == [{"path": _PREMIUM_PATH, "item_types": ["feature"]}]
-    assert diagnostic["lost_fr_paths"] == []
-    _assert_coverage_log_omits_sensitive_content(logged)
+    assert response.status_code == 200
+    body = response.json()
+    assert _PREMIUM_PATH not in _user_story_paths(body)
+    assert any(
+        item["type"] == "feature"
+        and any(reference["json_path"] == _PREMIUM_PATH for reference in item["provenance"])
+        for item in body["backlog"]["items"]
+    )
+    assert any(
+        item["code"] == "UNCOVERED_FUNCTIONAL_REQUIREMENT"
+        and item["source_references"][0]["json_path"] == _PREMIUM_PATH
+        for item in body["findings"]["items"]
+    )
+    assert body["findings"]["llm_calls"][0]["accepted"] is False
+    assert "generate rejected decomposition" not in logged
+    assert _TOKEN not in logged
 
 
 def test_decomposition_failure_log_reports_paths_lost_by_repair(
@@ -237,18 +226,24 @@ def test_decomposition_failure_log_reports_paths_lost_by_repair(
     premium["title"] = "Unrelated quarterly billing export"
     premium["title_origin"] = "source"
     repaired_without_story = _premium_cited_only_by_feature()
-    response, diagnostic, logged = _post_rejected_proposal(
+    response, logged = _post_proposal(
         monkeypatch,
         caplog,
         [covered_then_invalid, repaired_without_story],
     )
 
-    assert response.status_code == 422
-    assert response.json()["error"] == "DECOMPOSITION_FAILED"
-    assert diagnostic["uncovered_fr_paths"] == [_PREMIUM_PATH]
-    assert diagnostic["non_story_citations"] == [{"path": _PREMIUM_PATH, "item_types": ["feature"]}]
-    assert diagnostic["lost_fr_paths"] == [_PREMIUM_PATH]
-    _assert_coverage_log_omits_sensitive_content(logged)
+    assert response.status_code == 200
+    body = response.json()
+    assert _PREMIUM_PATH not in _user_story_paths(body)
+    assert any(
+        item["code"] == "UNCOVERED_FUNCTIONAL_REQUIREMENT"
+        and item["source_references"][0]["json_path"] == _PREMIUM_PATH
+        for item in body["findings"]["items"]
+    )
+    assert body["findings"]["llm_calls"][-1]["kind"] == "hard_repair"
+    assert body["findings"]["llm_calls"][-1]["accepted"] is False
+    assert "generate rejected decomposition" not in logged
+    assert _TOKEN not in logged
 
 
 def test_generate_provider_failure_is_controlled(monkeypatch: pytest.MonkeyPatch) -> None:
