@@ -29,6 +29,8 @@ from backlog_agent.backlog.models import (
     WorkItemType,
 )
 from backlog_agent.backlog.granularity import (
+    _ACTION_VERBS,
+    _OUTCOME_VERBS,
     _QUESTION_FRAME_WORDS,
     _is_acceptance_criterion_path,
     _is_functional_requirement_path,
@@ -2337,18 +2339,211 @@ def _scoped_criterion_texts(
     return replacements or None
 
 
+_CLAUSE_AUXILIARIES = frozenset(
+    {
+        "are",
+        "be",
+        "been",
+        "can",
+        "could",
+        "did",
+        "do",
+        "does",
+        "had",
+        "has",
+        "have",
+        "is",
+        "may",
+        "might",
+        "must",
+        "shall",
+        "should",
+        "was",
+        "were",
+        "will",
+        "would",
+    }
+)
+_CLAUSE_DETERMINERS = frozenset(
+    {"a", "an", "each", "every", "its", "the", "their", "these", "this", "those"}
+)
+_CLAUSE_PREPOSITIONS = frozenset(
+    {
+        "about",
+        "after",
+        "before",
+        "by",
+        "for",
+        "from",
+        "in",
+        "into",
+        "of",
+        "on",
+        "through",
+        "to",
+        "via",
+        "with",
+    }
+)
+_CLAUSE_VERB_STEMS = frozenset(
+    list(_ACTION_VERBS) + re.findall(r"[a-z]+", _OUTCOME_VERBS)
+)
+
+
 def _criterion_clauses(text: str) -> list[str]:
-    parts = [
+    raw = [
         part.strip(" .;")
         for part in re.split(r"\s+(?:and|or)\s+", text, flags=re.IGNORECASE)
-        if len(_significant_tokens(part)) >= 2
+        if part.strip(" .;")
     ]
-    if len(parts) >= 2:
-        return parts
+    if len(raw) >= 2:
+        # A comma marks a list inside one outcome. A conjunct that cannot be
+        # completed is left in the original sentence so nothing is dropped.
+        if any("," in part for part in raw) or any(
+            len(_significant_tokens(part)) < 2 for part in raw
+        ):
+            return [text.strip()]
+        completed = _complete_conjuncts(raw)
+        if completed and len(completed) >= 2:
+            return completed
+        return [text.strip()]
     outcomes = list(requirement_outcomes(text))
     if len(outcomes) >= 2:
         return outcomes
     return [text.strip()]
+
+
+def _auxiliary_token(word: str) -> bool:
+    return word.lower().strip(".,;") in _CLAUSE_AUXILIARIES
+
+
+def _known_verb(word: str) -> bool:
+    token = word.lower().strip(".,;")
+    stems = {token}
+    if len(token) > 4 and token.endswith("ing"):
+        stems.add(token[:-3])
+    if len(token) > 3 and token.endswith("ed"):
+        stems.add(token[:-2])
+    if len(token) > 3 and token.endswith("es"):
+        stems.add(token[:-2])
+    if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+        stems.add(token[:-1])
+    return bool(stems & _CLAUSE_VERB_STEMS)
+
+
+def _leading_verb_index(words: list[str]) -> int | None:
+    index = 0
+    while index < len(words) and words[index].lower().endswith("ly"):
+        index += 1
+    if index >= len(words):
+        return None
+    if _known_verb(words[index]):
+        return index
+    if index + 1 < len(words) and words[index + 1].lower() in _CLAUSE_DETERMINERS:
+        return index
+    return None
+
+
+def _shared_subject(clause: str) -> str | None:
+    words = clause.split()
+    for index, word in enumerate(words):
+        if _auxiliary_token(word) and index > 0:
+            return " ".join(words[: index + 1])
+    if len(words) >= 2 and words[0].lower() in _CLAUSE_DETERMINERS:
+        return " ".join(words[:2])
+    return None
+
+
+def _expand_shared_verb_object(left: str, right: str) -> tuple[str, str] | None:
+    """Restore a shared object to both verbs in ``upgrade or downgrade an item``."""
+
+    left_words = left.split()
+    right_words = right.split()
+    if len(left_words) < 3 or len(right_words) < 3:
+        return None
+    if right_words[1].lower() not in _CLAUSE_DETERMINERS:
+        return None
+    if right_words[0].lower() in _CLAUSE_DETERMINERS or _auxiliary_token(right_words[0]):
+        return None
+    auxiliaries = [index for index, word in enumerate(left_words) if _auxiliary_token(word)]
+    if not auxiliaries:
+        return None
+    between = left_words[auxiliaries[-1] + 1 : -1]
+    if any(not word.lower().endswith("ly") for word in between):
+        return None
+    stem = " ".join(left_words[:-1])
+    obj = " ".join(right_words[1:])
+    return f"{stem} {left_words[-1]} {obj}", f"{stem} {right_words[0]} {obj}"
+
+
+def _attach_prepositional_object(previous: str, part: str) -> str | None:
+    words = part.split()
+    if not words or words[0].lower() not in _CLAUSE_DETERMINERS:
+        return None
+    previous_words = previous.split()
+    for index in range(len(previous_words) - 2, 0, -1):
+        if (
+            previous_words[index].lower() in _CLAUSE_PREPOSITIONS
+            and previous_words[index + 1].lower() in _CLAUSE_DETERMINERS
+        ):
+            prefix = " ".join(previous_words[: index + 1])
+            return f"{prefix} {part}"
+    return None
+
+
+def _imperative_clause(clause: str) -> bool:
+    words = clause.split()
+    if not words or any(_auxiliary_token(word) for word in words):
+        return False
+    if words[0].lower() in _CLAUSE_DETERMINERS:
+        return False
+    return _leading_verb_index(words) == 0
+
+
+def _has_clause_predicate(words: list[str]) -> bool:
+    if any(_auxiliary_token(word) for word in words):
+        return True
+    return any(_leading_verb_index(words[index:]) is not None for index in range(len(words)))
+
+
+def _finish_conjunct(previous: str | None, part: str) -> str | None:
+    words = part.split()
+    if not words:
+        return None
+    bare_noun = words[0].lower() in _CLAUSE_DETERMINERS and not _has_clause_predicate(words)
+    if bare_noun:
+        if previous is None:
+            return None
+        return _attach_prepositional_object(previous, part)
+    if not _has_clause_predicate(words):
+        return None
+    needs_subject = (
+        previous is not None
+        and not any(_auxiliary_token(word) for word in words)
+        and words[0].lower() not in _CLAUSE_DETERMINERS
+        and _leading_verb_index(words) is not None
+        and not _imperative_clause(previous)
+    )
+    if not needs_subject:
+        return part
+    subject = _shared_subject(previous)
+    if not subject or part.lower().startswith(subject.lower()):
+        return part if subject else None
+    return f"{subject} {part}"
+
+
+def _complete_conjuncts(parts: list[str]) -> list[str] | None:
+    if len(parts) == 2:
+        shared = _expand_shared_verb_object(parts[0], parts[1])
+        if shared:
+            return list(shared)
+    completed: list[str] = []
+    for part in parts:
+        finished = _finish_conjunct(completed[-1] if completed else None, part)
+        if not finished or len(_significant_tokens(finished)) < 2:
+            return None
+        completed.append(finished)
+    return completed
 
 
 def _story_focus_tokens(story: ProposedItem) -> set[str]:
@@ -2486,6 +2681,14 @@ def _criteria_without_phrase(
     return kept_text, kept_origins, edited
 
 
+def _chunk_carries_own_outcome(chunk: str, phrase: str, keep_tokens: set[str]) -> bool:
+    """True when the conjunct states this story's outcome, not only the leaked phrase."""
+
+    head = re.split(r"\b(?:so that|in order to|so)\b", chunk, maxsplit=1, flags=re.IGNORECASE)[0]
+    residual = set(_significant_tokens(head)) - set(_significant_tokens(phrase))
+    return bool(residual & keep_tokens)
+
+
 def _without_owned_phrase(text: str, phrase: str, keep_tokens: set[str]) -> str:
     if not text:
         return text
@@ -2502,12 +2705,20 @@ def _without_owned_phrase(text: str, phrase: str, keep_tokens: set[str]) -> str:
         chunks = re.split(r"\s+\band\b\s+", sentence, flags=re.IGNORECASE)
         if len(chunks) <= 1:
             return ""
-        kept = [chunk.strip(" ,;") for chunk in chunks if needle not in normalize_source_text(chunk)]
+        kept: list[str] = []
+        for chunk in chunks:
+            if needle not in normalize_source_text(chunk):
+                kept.append(chunk.strip(" ,;"))
+                continue
+            # The chunk still states this story's outcome. Dropping it would
+            # discard that outcome and glue the remaining conjuncts together.
+            if _chunk_carries_own_outcome(chunk, phrase, keep_tokens):
+                return ""
         if not kept or len(kept) == len(chunks):
             return ""
         if any(not (set(_significant_tokens(chunk)) & keep_tokens) for chunk in kept):
             return ""
-        rewritten.append(" ".join(kept))
+        rewritten.append(" and ".join(kept))
         changed = True
     if not changed or not rewritten:
         return ""
