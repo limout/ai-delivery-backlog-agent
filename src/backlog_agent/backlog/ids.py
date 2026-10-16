@@ -46,6 +46,12 @@ def normalize_source_text(value: str) -> str:
     return " ".join(value.casefold().split())
 
 
+def statement_key(text: str) -> str:
+    """Identity of a full statement, ignoring only case, whitespace, and edge punctuation."""
+
+    return normalize_source_text(text).strip(".,;:!?\"'`")
+
+
 def item_identity_key(base_path: str, text: str, occurrence: int) -> str:
     """Return the UUID5 name for a generated item (not a JSONPath)."""
 

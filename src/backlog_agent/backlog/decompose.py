@@ -20,7 +20,7 @@ from backlog_agent.backlog.generate import (
     _source_ref,
     resolve_json_path,
 )
-from backlog_agent.backlog.ids import item_identity_key, normalize_source_text
+from backlog_agent.backlog.ids import item_identity_key, normalize_source_text, statement_key
 from backlog_agent.backlog.provenance import collapse_equivalent_provenance
 from backlog_agent.backlog.models import (
     ApprovalState,
@@ -668,8 +668,7 @@ def _execution_quality_errors(source: NormalizedProjectSource, proposal: Backlog
                     "requirement alone; attach that constraint's path and excerpt to a story "
                     "that cites a functional requirement"
                 )
-            fr_paths = sorted(set(functional_requirement_paths(item)))
-            if len(fr_paths) >= 2:
+            if _distinct_functional_statement_keys(item) >= 2:
                 errors.append(
                     f"{item.local_id}: user stories must not combine independently testable "
                     "outcomes from distinct functional requirements; keep one functional "
@@ -1446,19 +1445,37 @@ def _record_prerequisites(
         )
 
 
-def _statement_key(text: str) -> str:
-    """Identity of a full statement, ignoring only case, whitespace, and edge punctuation."""
+def _distinct_functional_statement_keys(item: ProposedItem) -> int:
+    """Functional statements on one story. Identical keys count once.
 
-    return normalize_source_text(text).strip(".,;:!?\"'`")
+    A functional path with no excerpt stays distinct so a missing quotation is
+    not treated as the same statement as another path.
+    """
+
+    keyed: set[str] = set()
+    unkeyed: set[str] = set()
+    for reference in item.provenance:
+        if not _is_requirement_path(reference.json_path, _FUNCTIONAL_REQUIREMENT_PATH):
+            continue
+        excerpt = (reference.excerpt or "").strip()
+        if excerpt:
+            keyed.add(statement_key(excerpt))
+        else:
+            unkeyed.add(reference.json_path)
+    return len(keyed) + len(unkeyed)
 
 
 def _bind_exact_functional_citations(
     source: NormalizedProjectSource, proposal: BacklogProposal
 ) -> None:
-    """Attach a functional-requirement path when one story already states that full text.
+    """Attach equivalent functional paths without combining different outcomes.
 
-    A shorter clause is not the statement. A story that already cites a different
-    functional requirement is left unchanged so two requirements are not combined.
+    Facts that share a statement key are one statement. A story that already
+    cites one copy with that copy's own excerpt receives each uncited copy,
+    unless another story already cites it. When two stories cite different
+    copies, both stories and both citations stay as they are. A shorter clause
+    is not the statement. A story that cites a different functional statement
+    does not receive these paths.
     """
 
     facts = [
@@ -1466,58 +1483,76 @@ def _bind_exact_functional_citations(
         for fact in source.functional_requirements
         if fact.text.strip() and classify_scope(source, fact.text) not in {"out", "conflict"}
     ]
-    unique: dict[str, Any] = {}
-    duplicate_keys: set[str] = set()
-    for fact in facts:
-        key = _statement_key(fact.text)
-        if len(key) < 12:
-            continue
-        if key in unique or key in duplicate_keys:
-            duplicate_keys.add(key)
-            unique.pop(key, None)
-            continue
-        unique[key] = fact
+    by_path = {fact.json_path: fact for fact in facts}
+    stories = [item for item in proposal.items if item.type is WorkItemType.USER_STORY]
 
-    for item in proposal.items:
-        if item.type is not WorkItemType.USER_STORY:
-            continue
+    for item in stories:
         for reference in item.provenance:
             if not _is_requirement_path(reference.json_path, _FUNCTIONAL_REQUIREMENT_PATH):
                 continue
-            fact = next((candidate for candidate in facts if candidate.json_path == reference.json_path), None)
+            fact = by_path.get(reference.json_path)
             if fact is None or not reference.excerpt:
                 continue
-            if reference.excerpt != fact.text and _statement_key(reference.excerpt) == _statement_key(fact.text):
+            if reference.excerpt != fact.text and statement_key(reference.excerpt) == statement_key(fact.text):
                 reference.excerpt = fact.text
-
-    covered = {
-        fact.json_path
-        for fact in facts
-        if _provenance_covers_fact(proposal.items, fact, types={WorkItemType.USER_STORY})
-    }
 
     def states(item: ProposedItem, key: str) -> bool:
         texts = [item.title, item.description, *item.acceptance_criteria]
         texts.extend(reference.excerpt or "" for reference in item.provenance)
-        return any(text.strip() and _statement_key(text) == key for text in texts)
+        return any(text.strip() and statement_key(text) == key for text in texts)
 
-    for key, fact in unique.items():
-        if fact.json_path in covered:
+    def cites_exactly(item: ProposedItem, fact: Any) -> bool:
+        return any(
+            reference.json_path == fact.json_path and reference.excerpt == fact.text
+            for reference in item.provenance
+        )
+
+    def has_other_statement(item: ProposedItem, key: str) -> bool:
+        for reference in item.provenance:
+            if not _is_requirement_path(reference.json_path, _FUNCTIONAL_REQUIREMENT_PATH):
+                continue
+            fact = by_path.get(reference.json_path)
+            excerpt = (fact.text if fact is not None else reference.excerpt) or ""
+            if excerpt.strip() and statement_key(excerpt) != key:
+                return True
+            if not excerpt.strip():
+                return True
+        return False
+
+    groups: dict[str, list[Any]] = {}
+    for fact in facts:
+        groups.setdefault(statement_key(fact.text), []).append(fact)
+
+    for key, members in groups.items():
+        missing = [fact for fact in members if not any(cites_exactly(story, fact) for story in stories)]
+        if not missing:
+            continue
+        hosts = [
+            story
+            for story in stories
+            if any(cites_exactly(story, fact) for fact in members) and not has_other_statement(story, key)
+        ]
+        if hosts:
+            _append_functional_facts(hosts[0], missing)
+            continue
+        if any(cites_exactly(story, fact) for story in stories for fact in members):
+            continue
+        if len(key) < 12:
             continue
         matches = [
-            item
-            for item in proposal.items
-            if item.type is WorkItemType.USER_STORY
-            and states(item, key)
-            and all(
-                path == fact.json_path
-                for path in functional_requirement_paths(item)
-            )
+            story
+            for story in stories
+            if states(story, key) and not has_other_statement(story, key)
         ]
         if len(matches) != 1:
             continue
-        story = matches[0]
-        if any(reference.json_path == fact.json_path for reference in story.provenance):
+        _append_functional_facts(matches[0], missing)
+
+
+def _append_functional_facts(story: ProposedItem, facts: list[Any]) -> None:
+    present = {reference.json_path for reference in story.provenance}
+    for fact in facts:
+        if fact.json_path in present:
             continue
         story.provenance.append(
             ProposedProvenance(
@@ -1526,6 +1561,7 @@ def _bind_exact_functional_citations(
                 excerpt=fact.text,
             )
         )
+        present.add(fact.json_path)
 
 
 def _provenance_covers_fact(
@@ -1773,6 +1809,21 @@ def _record_requirement_coverage_findings(
     items: list[Any],
     findings: _FindingSink,
 ) -> None:
+    background: set[str] = set()
+    for other in source.functional_requirements:
+        background |= distinctive_tokens(other.text)
+    for other in source.acceptance_criteria:
+        background |= distinctive_tokens(other.text)
+    covering = [
+        item
+        for item in items
+        if getattr(item, "type", None) is WorkItemType.USER_STORY
+        or (
+            getattr(item, "type", None) is WorkItemType.TASK
+            and not is_investigation_task(item)
+        )
+    ]
+    groups: dict[str, list[Any]] = {}
     for fact in source.non_functional_requirements:
         if fact.is_timeline_or_estimate or looks_like_delivery_process_constraint(fact.text):
             findings.add(
@@ -1791,45 +1842,46 @@ def _record_requirement_coverage_findings(
             continue
         if classify_scope(source, fact.text) in {"out", "conflict"}:
             continue
-        background: set[str] = set()
-        for other in source.functional_requirements:
-            background |= distinctive_tokens(other.text)
-        for other in source.acceptance_criteria:
-            background |= distinctive_tokens(other.text)
-        covering = [
-            item
-            for item in items
-            if getattr(item, "type", None) is WorkItemType.USER_STORY
-            or (
-                getattr(item, "type", None) is WorkItemType.TASK
-                and not is_investigation_task(item)
+        groups.setdefault(statement_key(fact.text), []).append(fact)
+    for members in groups.values():
+        represented = [
+            any(
+                item_represents_requirement(
+                    item,
+                    fact.text,
+                    background=background,
+                    # A Story covers a constraint only by verifying it. A Task is the work itself.
+                    verification_only=getattr(item, "type", None) is WorkItemType.USER_STORY,
+                )
+                for item in covering
             )
+            for fact in members
         ]
-        if any(
-            item_represents_requirement(
-                item,
-                fact.text,
-                background=background,
-                # A Story covers a constraint only by verifying it. A Task is the work itself.
-                verification_only=getattr(item, "type", None) is WorkItemType.USER_STORY,
-            )
-            for item in covering
-        ):
+        if all(represented):
             continue
-        findings.add(
-            Finding(
-                severity=FindingSeverity.WARNING,
-                code=FindingCode.UNCOVERED_NON_FUNCTIONAL_REQUIREMENT,
-                message=(
-                    "Non-functional requirement is not represented by backlog wording that "
-                    "implements or verifies the constraint. Provenance alone is not coverage. "
-                    "An ambiguity note is not a substitute for a Story or Task."
-                ),
-                source_references=[
-                    _source_ref(fact.json_path, fact.field_name, excerpt=fact.text)
-                ],
-            )
+        uncovered = [fact for fact, covered in zip(members, represented, strict=True) if not covered]
+        if len(uncovered) != len(members):
+            for fact in uncovered:
+                _add_uncovered_non_functional_finding(findings, [fact])
+            continue
+        _add_uncovered_non_functional_finding(findings, members)
+
+
+def _add_uncovered_non_functional_finding(findings: _FindingSink, facts: list[Any]) -> None:
+    findings.add(
+        Finding(
+            severity=FindingSeverity.WARNING,
+            code=FindingCode.UNCOVERED_NON_FUNCTIONAL_REQUIREMENT,
+            message=(
+                "Non-functional requirement is not represented by backlog wording that "
+                "implements or verifies the constraint. Provenance alone is not coverage. "
+                "An ambiguity note is not a substitute for a Story or Task."
+            ),
+            source_references=[
+                _source_ref(fact.json_path, fact.field_name, excerpt=fact.text) for fact in facts
+            ],
         )
+    )
 
 
 def _uncertainty_key(note: str) -> str:

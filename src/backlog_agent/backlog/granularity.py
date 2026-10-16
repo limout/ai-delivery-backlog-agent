@@ -6,7 +6,7 @@ import re
 from collections import Counter, defaultdict
 from typing import Any
 
-from backlog_agent.backlog.ids import normalize_source_text
+from backlog_agent.backlog.ids import normalize_source_text, statement_key
 from backlog_agent.backlog.models import WorkItemType
 from backlog_agent.backlog.quality_gate import material_hierarchy_message
 from backlog_agent.findings.models import Finding, FindingCode, FindingSeverity
@@ -299,11 +299,31 @@ def action_verbs(text: str) -> set[str]:
     return {verb for verb in _ACTION_VERBS if re.search(rf"\b{re.escape(verb)}\b", normalized)}
 
 
+def _functional_statement_count(item: Any) -> int:
+    """Distinct functional statements on a story.
+
+    Paths whose excerpts are the same statement key count once. A path with no
+    excerpt stays distinct so a missing quotation is not hidden.
+    """
+
+    keyed: set[str] = set()
+    unkeyed: set[str] = set()
+    for reference in getattr(item, "provenance", ()) or ():
+        path = getattr(reference, "json_path", "") or ""
+        if not _is_functional_requirement_path(path):
+            continue
+        excerpt = (getattr(reference, "excerpt", None) or "").strip()
+        if excerpt:
+            keyed.add(statement_key(excerpt))
+        elif path:
+            unkeyed.add(path)
+    return len(keyed) + len(unkeyed)
+
+
 def looks_oversized_story(item: Any) -> bool:
     """True when a story appears to bundle multiple independently testable outcomes."""
 
-    fr_paths = set(functional_requirement_paths(item))
-    if len(fr_paths) >= 2:
+    if _functional_statement_count(item) >= 2:
         return True
     criteria = list(getattr(item, "acceptance_criteria", ()) or ())
     if len(criteria) >= 4:
